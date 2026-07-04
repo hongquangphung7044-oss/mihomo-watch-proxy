@@ -66,16 +66,17 @@ private fun MainScreen(vm: AppViewModel) {
             StatusBadge(text, color)
         }
 
-        // 已授权但 UserService 未绑定时,显示重新连接按钮
+        // 已授权但 UserService 未绑定时,显示重新连接按钮(可选,反射模式不需要)
         if (vm.shizukuState == AppViewModel.ShizukuState.READY && !vm.isBound) {
+            item { HintText("UserService 未绑定(32 位 Wear OS 常见)") }
+            item { HintText("→ 反射模式可用,无需绑定即可启动代理") }
             item {
                 Chip(
                     onClick = { vm.reconnect() },
-                    label = { Text("重连 UserService") },
-                    colors = ChipDefaults.primaryChipColors()
+                    label = { Text("尝试绑定 UserService(可选)") },
+                    colors = ChipDefaults.secondaryChipColors()
                 )
             }
-            item { HintText("32 位系统首次绑定可能需重试") }
         }
 
         // 诊断按钮(始终显示,排错用)
@@ -96,11 +97,20 @@ private fun MainScreen(vm: AppViewModel) {
                 )
             }
             item {
-                Chip(
-                    onClick = { vm.refreshDiagnostic() },
-                    label = { Text("刷新诊断") }
-                )
+                Row {
+                    Chip(
+                        onClick = { vm.refreshDiagnostic() },
+                        label = { Text("刷新诊断") }
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Chip(
+                        onClick = { vm.testReflection() },
+                        label = { Text("测试反射") },
+                        colors = ChipDefaults.primaryChipColors()
+                    )
+                }
             }
+            item { HintText("反射成功→直接点'启动'即可开代理") }
         }
 
         // 未授权时显示授权按钮

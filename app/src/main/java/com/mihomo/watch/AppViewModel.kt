@@ -104,20 +104,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("UserService 绑定成功")
             },
             onFailed = { msg ->
-                // 失败原因同时写到 error(显示在 UI 顶部)和 diagnostic
-                error = "UserService 绑定失败:\n$msg"
-                appendLog("UserService 绑定失败: $msg")
+                // 自动 bind 失败不弹错误:32 位 Wear OS 上 UserService 本就难绑,
+                // 反射通道(Shizuku.newProcess)仍可用,用户直接点'启动'即可。
+                appendLog("UserService 自动绑定失败(不影响使用,反射模式仍可用): $msg")
                 refreshDiagnostic()
             }
         )
     }
 
     /**
-     * 获取可用的命令执行器(UserService 代理)。
-     * 未绑定时返回 null,调用方应先 bind。
+     * 获取可用的命令执行器。
+     * 优先 UserService(已绑定);否则用反射 Shizuku.newProcess(备用通道,绕过 UserService)。
+     * 只要 Shizuku 运行中+已授权,备用通道一定可用。
      */
     private fun getRunner(): CommandRunner? {
         service?.let { s -> return { cmd -> s.exec(cmd) } }
+        if (shizuku.canExecDirectly) {
+            return { cmd ->
+                try {
+                    shizuku.execViaReflection(cmd)
+                } catch (e: Exception) {
+                    "ERROR: ${e.message}"
+                }
+            }
+        }
         return null
     }
 
@@ -137,7 +147,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             doStartProxy(existingRunner, url)
             return
         }
-        appendLog("尝试连接 Shizuku UserService...")
+        appendLog("Shizuku 反射通道不可用,尝试 UserService...")
         shizuku.bind(
             onConnected = { s ->
                 service = s
@@ -147,7 +157,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             },
             onFailed = { msg ->
                 loading = false
-                error = msg
+                error = "Shizuku 通道均不可用: $msg\n请确认 Shizuku 服务正在运行(不只是已安装)"
                 refreshDiagnostic()
             }
         )
@@ -203,6 +213,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshDiagnostic() {
         diagnostic = shizuku.getDiagnostic()
+    }
+
+    /** 测试反射通道(Shizuku.newProcess),验证能否绕过 UserService 启动代理 */
+    fun testReflection() {
+        viewModelScope.launch(Dispatchers.IO) {
+            shizuku.testReflection()
+            diagnostic = shizuku.getDiagnostic()
+        }
     }
 
     fun stopProxy() {

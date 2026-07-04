@@ -41,6 +41,9 @@ class ShizukuManager(private val context: Context) {
     /** 反射设 use32BitAppProcess 的结果(诊断用) */
     private var reflect32BitResult: String = "未尝试"
 
+    /** 反射通道(Shizuku.newProcess)测试结果(诊断用) */
+    private var reflectionTestResult: String = "未测试"
+
     var onStateChanged: (() -> Unit)? = null
 
     private val userServiceArgs: Shizuku.UserServiceArgs = run {
@@ -231,8 +234,11 @@ class ShizukuManager(private val context: Context) {
         append("Shizuku UID(0=root/2000=shell): $uid\n")
         append("\n=== 32 位反射 ===\n")
         append("use32BitAppProcess: $reflect32BitResult\n")
+        append("(注:纯 32 位系统上此字段无效,app_process32 不存在则回退默认)\n")
         append("\n=== bind 失败原因 ===\n")
         append(lastBindError)
+        append("\n\n=== 反射通道(Shizuku.newProcess)测试 ===\n")
+        append(reflectionTestResult)
         append("\n\n=== 本 App ===\n")
         append("包名: ${context.packageName}\n")
         append("UserService 类: ${WatchUserService::class.java.name}\n")
@@ -245,15 +251,89 @@ class ShizukuManager(private val context: Context) {
             append("  adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh\n")
         } else if (!hasPermission()) {
             append("→ 在 Shizuku App 给本 App 授权\n")
-        } else if (!isBound) {
-            append("→ bind 失败原因见上方。若 onNullBinding:\n")
-            append("  1. 确认 Shizuku 版本 >= 13\n")
-            append("  2. 重启手表后重新启动 Shizuku 服务\n")
-            append("  3. 卸载重装本 APK(version 变化触发 Shizuku 重建)\n")
         } else {
-            append("→ 状态正常\n")
+            append("→ Shizuku 已就绪。即使 UserService 绑定失败,反射通道仍可启动代理。\n")
+            append("→ 点'测试反射'验证;成功后直接点'启动'即可(自动走反射模式)。\n")
         }
     }
+
+    /**
+     * 测试反射通道(Shizuku.newProcess):跑 id + pgrep mihomo,验证能否以 shell 身份执行命令。
+     * 这是 UserService 不可用时的备用通道,只要 Shizuku 运行中+已授权就一定能用。
+     */
+    fun testReflection() {
+        reflectionTestResult = try {
+            if (!isRunning) {
+                "失败:Shizuku 服务未运行"
+            } else if (!hasPermission()) {
+                "失败:未授权 Shizuku"
+            } else {
+                val id = execViaReflection("id")
+                val pgrep = execViaReflection("pgrep -f mihomo 2>/dev/null || echo NONE")
+                "成功!\n  id: ${id.trim().take(120)}\n  mihomo 进程: ${pgrep.trim().take(80)}\n" +
+                    "→ 反射通道可用,可点击'启动'启动代理(无需 UserService 绑定)"
+            }
+        } catch (e: Exception) {
+            "失败: ${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    /**
+     * 备用通道:反射调 Shizuku.newProcess 直接执行命令。
+     * 完全绕过 UserService(Whizuku 手表版可能不支持 bindUserService)。
+     *
+     * Shizuku.newProcess 是 private static 方法,内部:
+     *   1. 调 requireService() 拿 IShizukuService(service 字段,binder received 时设置)
+     *   2. 调 service.newProcess(cmd, env, dir) 通过 binder 在 Shizuku 进程执行
+     *   3. 返回 ShizukuRemoteProcess(继承 Process,stdin/stdout/stderr 都可用)
+     *
+     * 如果 service 字段为 null(binder 还没接收),手动触发 onBinderReceived。
+     */
+    fun execViaReflection(cmd: String): String {
+        // 确保 service 字段已设置(binder received 时自动设置,但可能还没触发)
+        ensureServiceField()
+
+        // 反射调 Shizuku.newProcess(String[] cmd, String[] env, String dir)
+        val method = Shizuku::class.java.getDeclaredMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java
+        )
+        method.isAccessible = true
+        val process = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+        val out = process.inputStream.bufferedReader().use { it.readText() }
+        val err = process.errorStream.bufferedReader().use { it.readText() }
+        process.waitFor()
+        return out + err
+    }
+
+    /** 确保 Shizuku.service 字段已设置(binder received 时设置,可能需要手动触发) */
+    private fun ensureServiceField() {
+        try {
+            val serviceField = Shizuku::class.java.getDeclaredField("service")
+            serviceField.isAccessible = true
+            if (serviceField.get(null) == null) {
+                // service 为 null,用 getBinder() 手动触发 onBinderReceived
+                val binder = Shizuku.getBinder()
+                if (binder != null) {
+                    val onBinderReceived = Shizuku::class.java.getDeclaredMethod(
+                        "onBinderReceived",
+                        IBinder::class.java,
+                        String::class.java
+                    )
+                    onBinderReceived.isAccessible = true
+                    onBinderReceived.invoke(null, binder, context.packageName)
+                }
+            }
+        } catch (e: Exception) {
+            // 忽略,继续尝试 newProcess(可能 service 已设置)
+        }
+    }
+
+    /** 备用通道是否可用(Shizuku 运行中 + 已授权) */
+    val canExecDirectly: Boolean
+        get() = isRunning && hasPermission()
 
     fun getService(): IWatchService? = service
 
