@@ -104,8 +104,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("UserService 绑定成功")
             },
             onFailed = { msg ->
+                // 失败原因同时写到 error(显示在 UI 顶部)和 diagnostic
+                error = "UserService 绑定失败:\n$msg"
                 appendLog("UserService 绑定失败: $msg")
-                appendLog("可改用'备用模式'启动(不依赖 UserService)")
+                refreshDiagnostic()
             }
         )
     }
@@ -186,7 +188,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("重新连接成功")
             },
             onFailed = { msg ->
-                error = msg
+                error = "重连失败:\n$msg"
+                appendLog("重新连接失败: $msg")
                 refreshDiagnostic()
             }
         )

@@ -38,6 +38,9 @@ class ShizukuManager(private val context: Context) {
     private var bindInProgress: Boolean = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** 反射设 use32BitAppProcess 的结果(诊断用) */
+    private var reflect32BitResult: String = "未尝试"
+
     var onStateChanged: (() -> Unit)? = null
 
     private val userServiceArgs: Shizuku.UserServiceArgs = run {
@@ -46,24 +49,22 @@ class ShizukuManager(private val context: Context) {
         )
             .processNameSuffix("mihomo_service")
             .debuggable(BuildConfig.DEBUG)
-            .version(3)  // version 升级,强制 Shizuku 丢弃旧 UserService 进程重新创建
+            .version(4)  // 再次升级,强制 Shizuku 丢弃旧 UserService 进程
 
         // 关键:32 位系统必须用 32 位 app_process 启动 UserService 进程。
         // Galaxy Watch7 国行是 32 位(armeabi-v7a),Shizuku 默认用 64 位 app_process,
-        // 会导致 WatchUserService 类加载失败 → onNullBinding → UserService 绑定不上。
+        // 会导致 WatchUserService 类加载失败 → onNullBinding。
         //
         // Shizuku.UserServiceArgs.use32BitAppProcess(true) 是 private 方法,
-        // 只能通过反射设置 use32BitAppProcess 字段。
-        // 参考 Shizuku 源码 api/.../Shizuku.java 第 587/661 行。
-        try {
+        // 通过反射设 use32BitAppProcess 字段。
+        reflect32BitResult = try {
             val field = Shizuku.UserServiceArgs::class.java
                 .getDeclaredField("use32BitAppProcess")
             field.isAccessible = true
             field.setBoolean(args, true)
+            "成功(use32BitAppProcess=true)"
         } catch (e: Exception) {
-            // 反射失败(Shizuku SDK 版本变化),记录但不阻断
-            // 大多数现代设备 64 位兼容,不设也能跑
-            e.printStackTrace()
+            "失败: ${e.javaClass.simpleName}: ${e.message}"
         }
         args
     }
@@ -135,13 +136,18 @@ class ShizukuManager(private val context: Context) {
         }
     }
 
+    /** 最近一次 bind 失败的原因(诊断用) */
+    private var lastBindError: String = "未尝试 bind"
+
     fun bind(onConnected: (IWatchService) -> Unit, onFailed: (String) -> Unit) {
         if (!isRunning) {
-            onFailed("Shizuku 服务未运行")
+            lastBindError = "Shizuku 服务未运行(pingBinder=false)"
+            onFailed(lastBindError)
             return
         }
         if (!hasPermission()) {
-            onFailed("未授权 Shizuku")
+            lastBindError = "未授权 Shizuku"
+            onFailed(lastBindError)
             return
         }
         service?.let { s ->
@@ -159,6 +165,7 @@ class ShizukuManager(private val context: Context) {
                 if (finished) return
                 finished = true
                 bindInProgress = false
+                lastBindError = "无(已连接)"
                 service = IWatchService.Stub.asInterface(binder)
                 service?.let { onConnected(it) }
                 onStateChanged?.invoke()
@@ -166,6 +173,7 @@ class ShizukuManager(private val context: Context) {
 
             override fun onServiceDisconnected(name: ComponentName) {
                 service = null
+                lastBindError = "onServiceDisconnected(连接中断)"
                 onStateChanged?.invoke()
             }
 
@@ -175,7 +183,8 @@ class ShizukuManager(private val context: Context) {
                 bindInProgress = false
                 service = null
                 conn = null
-                onFailed("Shizuku binder 死亡,服务可能被杀")
+                lastBindError = "onBindingDied(binder 死亡,Shizuku 服务可能被杀或重启)"
+                onFailed("Shizuku binder 死亡。请打开 Shizuku App 确认服务在运行,或重启 Shizuku 服务")
                 onStateChanged?.invoke()
             }
 
@@ -183,17 +192,20 @@ class ShizukuManager(private val context: Context) {
                 if (finished) return
                 finished = true
                 bindInProgress = false
-                onFailed("UserService 返回 null(Shizuku 加载 WatchUserService 失败)。可能原因:32 位系统未用 32 位 app_process,或 WatchUserService 类加载失败")
+                lastBindError = "onNullBinding(Shizuku 启动了 UserService 进程,但 WatchUserService.onBind 返回 null 或类加载失败)"
+                onFailed("UserService 绑定返回 null。\n可能原因:\n1. 32 位反射未生效(看诊断)\n2. WatchUserService 类在 Shizuku 进程加载失败\n3. AIDL 文件问题")
             }
         }
         conn = c
         bindInProgress = true
+        lastBindError = "bind 已发起,等待回调中..."
         try {
             Shizuku.bindUserService(userServiceArgs, c)
         } catch (e: Exception) {
             finished = true
             bindInProgress = false
             conn = null
+            lastBindError = "bindUserService 抛异常: ${e.javaClass.simpleName}: ${e.message}"
             onFailed("bindUserService 异常: ${e.message}")
             return
         }
@@ -201,7 +213,8 @@ class ShizukuManager(private val context: Context) {
             if (!finished && service == null) {
                 finished = true
                 bindInProgress = false
-                onFailed("连接 UserService 超时(8秒)")
+                lastBindError = "超时(8秒无回调)。Shizuku 可能没真正启动 UserService 进程"
+                onFailed("连接 UserService 超时(8秒无回调)")
                 onStateChanged?.invoke()
             }
         }, BIND_TIMEOUT_MS)
@@ -216,21 +229,27 @@ class ShizukuManager(private val context: Context) {
         append("bind 进行中: $bindInProgress\n")
         append("Shizuku 版本: $version\n")
         append("Shizuku UID(0=root/2000=shell): $uid\n")
-        append("32 位 app_process: 已通过反射设置\n")
-        append("\n=== 本 App ===\n")
+        append("\n=== 32 位反射 ===\n")
+        append("use32BitAppProcess: $reflect32BitResult\n")
+        append("\n=== bind 失败原因 ===\n")
+        append(lastBindError)
+        append("\n\n=== 本 App ===\n")
         append("包名: ${context.packageName}\n")
         append("UserService 类: ${WatchUserService::class.java.name}\n")
+        append("UserServiceArgs.version: 4\n")
         append("\n=== 排查建议 ===\n")
         if (!isInstalled) {
-            append("→ 请安装 Shizuku(手表版/Whizuku 均可)\n")
+            append("→ 请安装 Shizuku\n")
         } else if (!isRunning) {
             append("→ Shizuku 服务未运行!用 ADB 执行:\n")
             append("  adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh\n")
         } else if (!hasPermission()) {
             append("→ 在 Shizuku App 给本 App 授权\n")
         } else if (!isBound) {
-            append("→ UserService 绑定失败。本版本已加 32 位 app_process 参数\n")
-            append("  若仍失败,请反馈诊断截图\n")
+            append("→ bind 失败原因见上方。若 onNullBinding:\n")
+            append("  1. 确认 Shizuku 版本 >= 13\n")
+            append("  2. 重启手表后重新启动 Shizuku 服务\n")
+            append("  3. 卸载重装本 APK(version 变化触发 Shizuku 重建)\n")
         } else {
             append("→ 状态正常\n")
         }

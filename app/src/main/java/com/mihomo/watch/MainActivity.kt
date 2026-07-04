@@ -182,10 +182,17 @@ private fun MainScreen(vm: AppViewModel) {
             }
         }
 
-        // 错误提示
+        // 错误提示(可能多行,用 Text 块完整显示)
         vm.error?.let { msg ->
             item {
-                StatusBadge(msg, Color(0xFFE53935))
+                Text(
+                    text = "⚠ $msg",
+                    color = Color(0xFFFFCDD2),
+                    fontSize = 9.sp,
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp)
+                        .fillMaxWidth()
+                )
             }
             item {
                 Chip(
