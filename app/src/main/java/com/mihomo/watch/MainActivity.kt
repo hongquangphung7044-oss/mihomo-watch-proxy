@@ -66,16 +66,16 @@ private fun MainScreen(vm: AppViewModel) {
             StatusBadge(text, color)
         }
 
-        // 已授权但 UserService 未绑定时,显示重新连接按钮
+        // 已授权但 UserService 未绑定时,显示重新连接按钮(但不阻止启动,备用模式可用)
         if (vm.shizukuState == AppViewModel.ShizukuState.READY && !vm.isBound) {
             item {
                 Chip(
                     onClick = { vm.reconnect() },
-                    label = { Text("重新连接 UserService") },
+                    label = { Text("重连 UserService") },
                     colors = ChipDefaults.primaryChipColors()
                 )
             }
-            item { HintText("若反复失败,点下方'诊断'看详情") }
+            item { HintText("未绑定也可直接启动(自动用备用模式)") }
         }
 
         // 诊断按钮(始终显示,排错用)

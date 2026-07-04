@@ -5,13 +5,22 @@ import android.content.pm.PackageManager
 import java.io.File
 
 /**
+ * 命令执行器抽象。两种实现:
+ *  1. UserService 模式:runner = service::exec (IWatchService 代理)
+ *  2. 备用模式:runner = shizuku::execViaShizuku (Shizuku.newProcess)
+ *
+ * 两者都返回 stdout+stderr 合并文本,MihomoController 不关心具体来源。
+ */
+typealias CommandRunner = (String) -> String
+
+/**
  * mihomo 内核生命周期编排。
  *
  * 完整流程:
  *   1. 从 APK 的 assets 释放 mihomo 二进制到 App 外部存储目录(App 有权写)
- *   2. 通过 Shizuku UserService(shell 权限)把二进制 cp 到 /data/local/tmp 并 chmod
+ *   2. 通过 Shizuku(shell 权限)把二进制 cp 到 /data/local/tmp 并 chmod
  *   3. 把订阅生成的 config.yaml 同样 cp 到 /data/local/tmp/mihomo_home/
- *   4. 用 shell 启动 mihomo(nohop 脱离),监听 7890 端口
+ *   4. 用 shell 启动 mihomo(nohup 脱离),监听 7890 端口
  *   5. 用 settings put global http_proxy 127.0.0.1:7890 设全局代理
  *
  * 路径约定(必须用 shell 可写可执行的 /data/local/tmp):
@@ -34,15 +43,10 @@ class MihomoController(private val context: Context) {
 
     private val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
-    /** App 外部存储目录(shell 可读) */
     private val extDir: File
         get() = context.getExternalFilesDir(null)
             ?: throw RuntimeException("无法访问外部存储目录")
 
-    /**
-     * 从 assets 释放 mihomo 二进制到外部目录。
-     * App 版本变化时重新释放,确保二进制跟 APK 同步更新。
-     */
     fun ensureBinaryReleased(): File {
         val extBin = File(extDir, "mihomo")
         val currentVersion = try {
@@ -61,85 +65,84 @@ class MihomoController(private val context: Context) {
         return extBin
     }
 
-    /** 通过 Shizuku 把外部目录的二进制安装到 /data/local/tmp */
-    fun installBinary(service: IWatchService) {
+    /** 安装 mihomo 二进制到 /data/local/tmp */
+    fun installBinary(runner: CommandRunner) {
         val extBin = ensureBinaryReleased()
-        service.installBinary(extBin.absolutePath, MIHOMO_BIN)
-        // 验证安装结果
-        val check = service.exec("ls -la $MIHOMO_BIN 2>&1")
-        if (!check.contains("mihomo")) {
-            throw RuntimeException("二进制安装到 /data/local/tmp 失败: $check")
+        // 注意:cp 后必须 chmod 755,/data/local/tmp 才能执行
+        val r = runner("cp '${extBin.absolutePath}' '$MIHOMO_BIN' && chmod 755 '$MIHOMO_BIN' && ls -la $MIHOMO_BIN 2>&1")
+        if (!r.contains("mihomo")) {
+            throw RuntimeException("二进制安装失败: $r")
         }
     }
 
-    /** 把 config 内容写到外部目录,再 cp 到 mihomo_home */
-    fun installConfig(service: IWatchService, configContent: String) {
+    /** 安装配置文件到 mihomo_home */
+    fun installConfig(runner: CommandRunner, configContent: String) {
         val extConfig = File(extDir, "config.yaml")
         extConfig.writeText(configContent)
-        service.installConfig(extConfig.absolutePath, CONFIG_PATH)
-        val check = service.exec("head -3 $CONFIG_PATH 2>&1")
-        if (check.contains("No such file") || check.isBlank()) {
-            throw RuntimeException("配置安装失败: $check")
+        val r = runner("mkdir -p '$MIHOMO_HOME' && cp '${extConfig.absolutePath}' '$CONFIG_PATH' && head -3 $CONFIG_PATH 2>&1")
+        if (r.contains("No such file") || r.isBlank()) {
+            throw RuntimeException("配置安装失败: $r")
         }
     }
 
     /**
      * 启动完整代理链:安装二进制 + 安装配置 + 启动 mihomo + 设全局代理。
+     * @param runner 命令执行器(UserService 或 newProcess)
      * @param configContent 订阅下载并注入控制面板配置后的完整 yaml
      */
-    fun start(service: IWatchService, configContent: String) {
+    fun start(runner: CommandRunner, configContent: String) {
         // 1. 二进制
-        installBinary(service)
+        installBinary(runner)
         // 2. 配置
-        installConfig(service, configContent)
-        // 3. 启动 mihomo
-        service.startMihomo(MIHOMO_BIN, MIHOMO_HOME)
+        installConfig(runner, configContent)
+        // 3. 启动 mihomo(nohup 脱离 runner 进程生命周期)
+        runner("pkill -f $MIHOMO_BIN 2>/dev/null; sleep 1; true")
+        runner("nohup $MIHOMO_BIN -d $MIHOMO_HOME > $MIHOMO_HOME/mihomo.log 2>&1 &")
+        Thread.sleep(1500)  // 给 mihomo 启动时间
         // 4. 验证启动
-        if (!service.isMihomoRunning) {
-            // 读日志辅助排查
-            val log = service.exec("tail -20 $MIHOMO_HOME/mihomo.log 2>&1")
+        val pgrep = runner("pgrep -f mihomo 2>/dev/null || echo NONE")
+        if (pgrep.contains("NONE") || pgrep.isBlank()) {
+            val log = runner("tail -30 $MIHOMO_HOME/mihomo.log 2>&1")
             throw RuntimeException("mihomo 启动失败,日志:\n$log")
         }
         // 5. 设全局代理
-        service.setProxy(PROXY_ADDR)
-        // 验证代理设置
-        val proxy = service.exec("settings get global http_proxy")
+        runner("settings put global http_proxy $PROXY_ADDR")
+        val proxy = runner("settings get global http_proxy")
         if (!proxy.contains(PROXY_ADDR)) {
             throw RuntimeException("代理设置失败,当前 http_proxy=$proxy")
         }
     }
 
     /** 停止:先清代理,再杀 mihomo */
-    fun stop(service: IWatchService) {
-        try { service.clearProxy() } catch (_: Exception) {}
-        try { service.stopMihomo() } catch (_: Exception) {}
+    fun stop(runner: CommandRunner) {
+        try { runner("settings delete global http_proxy") } catch (_: Exception) {}
+        try { runner("settings put global http_proxy :0") } catch (_: Exception) {}
+        try { runner("pkill -f mihomo 2>/dev/null; true") } catch (_: Exception) {}
     }
 
     /** mihomo 是否在运行 */
-    fun isRunning(service: IWatchService): Boolean = try {
-        service.isMihomoRunning
+    fun isRunning(runner: CommandRunner): Boolean = try {
+        val r = runner("pgrep -f mihomo 2>/dev/null || echo NONE")
+        !r.contains("NONE") && r.isNotBlank()
     } catch (e: Exception) {
         false
     }
 
     /** 读取最近日志(排错用) */
-    fun tailLog(service: IWatchService, lines: Int = 30): String = try {
-        service.exec("tail -$lines $MIHOMO_HOME/mihomo.log 2>&1")
+    fun tailLog(runner: CommandRunner, lines: Int = 30): String = try {
+        runner("tail -$lines $MIHOMO_HOME/mihomo.log 2>&1")
     } catch (e: Exception) {
         "读取日志失败: ${e.message}"
     }
 
     /**
      * 更新订阅:重新写 config.yaml,然后调 mihomo API reload。
-     * 不重启 mihomo 进程,避免断流。
-     * @return true 表示 reload 请求成功
+     * 不重启 mihomo 进程,不断流。
      */
-    fun updateConfigAndReload(service: IWatchService, configContent: String): Boolean {
-        installConfig(service, configContent)
-        // 触发 mihomo 热重载
+    fun updateConfigAndReload(runner: CommandRunner, configContent: String): Boolean {
+        installConfig(runner, configContent)
         return try {
-            val api = MihomoApi()
-            api.reloadConfig(CONFIG_PATH)
+            MihomoApi().reloadConfig(CONFIG_PATH)
         } catch (e: Exception) {
             false
         }

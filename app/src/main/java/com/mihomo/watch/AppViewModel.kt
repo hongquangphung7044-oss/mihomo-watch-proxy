@@ -76,16 +76,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             !shizuku.hasPermission() -> ShizukuState.NO_PERMISSION
             else -> ShizukuState.READY
         }
-        // 已授权但 service 未绑定时自动 bind
-        if (shizukuState == ShizukuState.READY && service == null) {
+        // 已授权但 service 未绑定时自动 bind(非阻塞,失败不影响备用模式)
+        if (shizukuState == ShizukuState.READY && service == null && !bindAttempted) {
+            bindAttempted = true
             connectShizuku()
         }
-        // 已绑定时刷新 mihomo 运行状态
-        service?.let { isRunning = controller.isRunning(it) }
+        // 有可用 runner 时刷新 mihomo 运行状态
+        getRunner()?.let { isRunning = controller.isRunning(it) }
     }
+
+    /** 是否已尝试 bind(避免反复自动 bind) */
+    private var bindAttempted = false
 
     fun requestPermission() {
         shizuku.requestPermission { granted ->
+            bindAttempted = false  // 授权后允许重新尝试 bind
             refreshShizuku()
         }
     }
@@ -95,12 +100,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onConnected = { s ->
                 service = s
                 shizukuState = ShizukuState.READY
-                isRunning = controller.isRunning(s)
+                isRunning = controller.isRunning { cmd -> s.exec(cmd) }
+                appendLog("UserService 绑定成功")
             },
             onFailed = { msg ->
-                error = msg
+                appendLog("UserService 绑定失败: $msg")
+                appendLog("可改用'备用模式'启动(不依赖 UserService)")
             }
         )
+    }
+
+    /**
+     * 获取可用的命令执行器。
+     * 优先 UserService(已绑定),否则备用模式(newProcess)。
+     * 都不可用返回 null。
+     */
+    private fun getRunner(): CommandRunner? {
+        service?.let { s -> return { cmd -> s.exec(cmd) } }
+        if (shizuku.canExecDirectly) {
+            return { cmd -> shizuku.execViaShizuku(cmd) }
+        }
+        return null
     }
 
     fun setSubscriptionFromClipboard(text: String?) {
@@ -112,29 +132,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (url.isEmpty()) { error = "请输入订阅链接"; return }
         loading = true
         error = null
-        val s = service
-        if (s != null) {
-            doStartProxy(s, url)
-        } else {
-            // service 未绑定,先尝试 bind,成功后继续启动
-            appendLog("Shizuku UserService 未绑定,尝试连接...")
-            shizuku.bind(
-                onConnected = { bound ->
-                    service = bound
-                    shizukuState = ShizukuState.READY
-                    appendLog("UserService 绑定成功")
-                    doStartProxy(bound, url)
-                },
-                onFailed = { msg ->
+
+        // 优先用已绑定的 UserService;否则尝试 bind;bind 失败用备用模式
+        val existingRunner = getRunner()
+        if (existingRunner != null) {
+            doStartProxy(existingRunner, url)
+            return
+        }
+        // service 未绑定且备用模式不可用(理论上不会,因为 canExecDirectly 跟 hasPermission 同步)
+        // 尝试 bind,成功后继续;失败直接用备用模式(如果 canExecDirectly 为 true)
+        appendLog("尝试连接 Shizuku UserService...")
+        shizuku.bind(
+            onConnected = { s ->
+                service = s
+                shizukuState = ShizukuState.READY
+                appendLog("UserService 绑定成功")
+                doStartProxy({ cmd -> s.exec(cmd) }, url)
+            },
+            onFailed = { msg ->
+                appendLog("UserService 绑定失败: $msg")
+                // fallback 到备用模式
+                if (shizuku.canExecDirectly) {
+                    appendLog("改用备用模式(Shizuku.newProcess)启动")
+                    doStartProxy({ cmd -> shizuku.execViaShizuku(cmd) }, url)
+                } else {
                     loading = false
                     error = msg
                     refreshDiagnostic()
                 }
-            )
-        }
+            }
+        )
     }
 
-    private fun doStartProxy(s: IWatchService, url: String) {
+    private fun doStartProxy(runner: CommandRunner, url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 appendLog("下载订阅: $url")
@@ -142,33 +172,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("订阅下载完成,${raw.length} 字节")
                 val config = subscription.injectControllerConfig(raw)
                 appendLog("配置生成完成,启动 mihomo...")
-                controller.start(s, config)
+                controller.start(runner, config)
                 isRunning = true
                 appendLog("启动成功,全局代理: ${MihomoController.PROXY_ADDR}")
             } catch (e: Exception) {
                 error = "启动失败: ${e.message}"
-                appendLog(controller.tailLog(s))
+                appendLog(controller.tailLog(runner))
             } finally {
                 loading = false
             }
         }
     }
 
-    /** 手动重新连接 Shizuku UserService(用户点"重新连接"时调用) */
+    /** 手动重新连接 Shizuku UserService */
     fun reconnect() {
         error = null
         appendLog("手动重新连接 Shizuku...")
         shizuku.unbind()
         service = null
+        bindAttempted = false
         shizuku.bind(
             onConnected = { s ->
                 service = s
                 shizukuState = ShizukuState.READY
-                isRunning = controller.isRunning(s)
+                isRunning = controller.isRunning { cmd -> s.exec(cmd) }
                 appendLog("重新连接成功")
             },
             onFailed = { msg ->
-                error = msg
+                appendLog("重新连接失败: $msg")
+                if (shizuku.canExecDirectly) {
+                    appendLog("仍可用备用模式启动")
+                } else {
+                    error = msg
+                }
                 refreshDiagnostic()
             }
         )
@@ -185,10 +221,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopProxy() {
-        val s = service ?: return
+        val runner = getRunner() ?: run {
+            error = "无可用执行通道"; return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                controller.stop(s)
+                controller.stop(runner)
                 isRunning = false
                 groups = emptyList()
                 appendLog("已停止,代理已清除")
@@ -230,7 +268,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * 不重启 mihomo 进程,不断流。
      */
     fun updateSubscription() {
-        val s = service ?: run { error = "Shizuku UserService 未绑定,请先点启动"; return }
+        val runner = getRunner() ?: run { error = "无可用执行通道,请先点启动"; return }
         val url = subscriptionUrl.trim()
         if (url.isEmpty()) { error = "请输入订阅链接"; return }
         updating = true
@@ -240,15 +278,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("更新订阅: $url")
                 val raw = subscription.download(url)
                 val config = subscription.injectControllerConfig(raw)
-                val ok = controller.updateConfigAndReload(s, config)
+                val ok = controller.updateConfigAndReload(runner, config)
                 if (ok) {
                     appendLog("订阅更新成功,mihomo 已热重载")
-                    // 刷新节点列表
                     groups = api.getSelectorGroups()
                     delays = emptyMap()
                 } else {
                     error = "reload 失败,mihomo 可能需要重启"
-                    appendLog(controller.tailLog(s))
+                    appendLog(controller.tailLog(runner))
                 }
             } catch (e: Exception) {
                 error = "更新订阅失败: ${e.message}"
