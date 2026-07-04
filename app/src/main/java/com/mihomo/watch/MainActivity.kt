@@ -66,7 +66,7 @@ private fun MainScreen(vm: AppViewModel) {
             StatusBadge(text, color)
         }
 
-        // 已授权但 UserService 未绑定时,显示重新连接按钮(但不阻止启动,备用模式可用)
+        // 已授权但 UserService 未绑定时,显示重新连接按钮
         if (vm.shizukuState == AppViewModel.ShizukuState.READY && !vm.isBound) {
             item {
                 Chip(
@@ -75,7 +75,7 @@ private fun MainScreen(vm: AppViewModel) {
                     colors = ChipDefaults.primaryChipColors()
                 )
             }
-            item { HintText("未绑定也可直接启动(自动用备用模式)") }
+            item { HintText("32 位系统首次绑定可能需重试") }
         }
 
         // 诊断按钮(始终显示,排错用)

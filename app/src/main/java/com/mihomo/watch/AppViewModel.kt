@@ -111,15 +111,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 获取可用的命令执行器。
-     * 优先 UserService(已绑定),否则备用模式(newProcess)。
-     * 都不可用返回 null。
+     * 获取可用的命令执行器(UserService 代理)。
+     * 未绑定时返回 null,调用方应先 bind。
      */
     private fun getRunner(): CommandRunner? {
         service?.let { s -> return { cmd -> s.exec(cmd) } }
-        if (shizuku.canExecDirectly) {
-            return { cmd -> shizuku.execViaShizuku(cmd) }
-        }
         return null
     }
 
@@ -133,14 +129,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         loading = true
         error = null
 
-        // 优先用已绑定的 UserService;否则尝试 bind;bind 失败用备用模式
+        // 已绑定直接用;否则尝试 bind,成功后继续
         val existingRunner = getRunner()
         if (existingRunner != null) {
             doStartProxy(existingRunner, url)
             return
         }
-        // service 未绑定且备用模式不可用(理论上不会,因为 canExecDirectly 跟 hasPermission 同步)
-        // 尝试 bind,成功后继续;失败直接用备用模式(如果 canExecDirectly 为 true)
         appendLog("尝试连接 Shizuku UserService...")
         shizuku.bind(
             onConnected = { s ->
@@ -150,16 +144,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 doStartProxy({ cmd -> s.exec(cmd) }, url)
             },
             onFailed = { msg ->
-                appendLog("UserService 绑定失败: $msg")
-                // fallback 到备用模式
-                if (shizuku.canExecDirectly) {
-                    appendLog("改用备用模式(Shizuku.newProcess)启动")
-                    doStartProxy({ cmd -> shizuku.execViaShizuku(cmd) }, url)
-                } else {
-                    loading = false
-                    error = msg
-                    refreshDiagnostic()
-                }
+                loading = false
+                error = msg
+                refreshDiagnostic()
             }
         )
     }
@@ -199,12 +186,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 appendLog("重新连接成功")
             },
             onFailed = { msg ->
-                appendLog("重新连接失败: $msg")
-                if (shizuku.canExecDirectly) {
-                    appendLog("仍可用备用模式启动")
-                } else {
-                    error = msg
-                }
+                error = msg
                 refreshDiagnostic()
             }
         )

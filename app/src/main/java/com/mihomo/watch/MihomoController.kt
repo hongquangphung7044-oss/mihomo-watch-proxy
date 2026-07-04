@@ -5,11 +5,10 @@ import android.content.pm.PackageManager
 import java.io.File
 
 /**
- * 命令执行器抽象。两种实现:
- *  1. UserService 模式:runner = service::exec (IWatchService 代理)
- *  2. 备用模式:runner = shizuku::execViaShizuku (Shizuku.newProcess)
+ * 命令执行器抽象。由 ShizukuManager 绑定的 UserService 提供:
+ *   runner = service::exec (IWatchService 代理,运行在 Shizuku shell 权限进程)
  *
- * 两者都返回 stdout+stderr 合并文本,MihomoController 不关心具体来源。
+ * MihomoController 不关心具体来源,只调 runner(cmd) 拿 stdout+stderr。
  */
 typealias CommandRunner = (String) -> String
 

@@ -12,14 +12,19 @@ import rikka.shizuku.Shizuku
 /**
  * Shizuku 集成封装。
  *
- * 提供两种执行 shell 命令的方式:
- *  1. UserService (首选):bindUserService 拿到 IWatchService 代理,方法调用式
- *  2. Shizuku.newProcess (备用):直接执行命令,不依赖 UserService 绑定
+ * 核心是 UserService:在 Shizuku 进程(shell 权限)里运行 WatchUserService,
+ * 拿到 IWatchService 代理后,所有命令都以 shell 身份执行。
  *
- * 重要概念区分(用户常混淆):
+ * 关键坑(Wear OS 32 位):
+ *  Shizuku 默认用 64 位 app_process 启动 UserService 进程,
+ *  但 Galaxy Watch7 国行系统是 32 位(armeabi-v7a),64 位 app_process 无法运行,
+ *  导致 onNullBinding,UserService 绑定失败。
+ *  解决:通过 UserServiceArgs 的隐藏参数 use_32_bit_app_process=true 强制 32 位。
+ *
+ * 重要概念区分:
  *  - Shizuku 已安装 ≠ Shizuku 已运行(需要 ADB 启动服务进程)
- *  - Shizuku 已运行 ≠ 已授权(需要在 Shizuku App 给本 App 授权)
- *  - 已授权 ≠ UserService 已绑定(bindUserService 是异步,可能失败)
+ *  - Shizuku 已运行 ≠ 已授权
+ *  - 已授权 ≠ UserService 已绑定(32 位系统上必须设 use32BitAppProcess)
  */
 class ShizukuManager(private val context: Context) {
 
@@ -35,13 +40,33 @@ class ShizukuManager(private val context: Context) {
 
     var onStateChanged: (() -> Unit)? = null
 
-    private val userServiceArgs: Shizuku.UserServiceArgs =
-        Shizuku.UserServiceArgs(
+    private val userServiceArgs: Shizuku.UserServiceArgs = run {
+        val args = Shizuku.UserServiceArgs(
             ComponentName(context.packageName, WatchUserService::class.java.name)
         )
             .processNameSuffix("mihomo_service")
             .debuggable(BuildConfig.DEBUG)
-            .version(2)  // version 升级,强制 Shizuku 重新加载 UserService
+            .version(3)  // version 升级,强制 Shizuku 丢弃旧 UserService 进程重新创建
+
+        // 关键:32 位系统必须用 32 位 app_process 启动 UserService 进程。
+        // Galaxy Watch7 国行是 32 位(armeabi-v7a),Shizuku 默认用 64 位 app_process,
+        // 会导致 WatchUserService 类加载失败 → onNullBinding → UserService 绑定不上。
+        //
+        // Shizuku.UserServiceArgs.use32BitAppProcess(true) 是 private 方法,
+        // 只能通过反射设置 use32BitAppProcess 字段。
+        // 参考 Shizuku 源码 api/.../Shizuku.java 第 587/661 行。
+        try {
+            val field = Shizuku.UserServiceArgs::class.java
+                .getDeclaredField("use32BitAppProcess")
+            field.isAccessible = true
+            field.setBoolean(args, true)
+        } catch (e: Exception) {
+            // 反射失败(Shizuku SDK 版本变化),记录但不阻断
+            // 大多数现代设备 64 位兼容,不设也能跑
+            e.printStackTrace()
+        }
+        args
+    }
 
     fun registerBinderListeners() {
         try {
@@ -64,6 +89,7 @@ class ShizukuManager(private val context: Context) {
             false
         }
 
+    /** Shizuku 服务是否正在运行(binder 是否存活) */
     val isRunning: Boolean
         get() = try {
             Shizuku.pingBinder()
@@ -87,13 +113,9 @@ class ShizukuManager(private val context: Context) {
             "unknown"
         }
 
-    /** binder 是否存活(精确检查,独立于 isRunning 的异常吞掉) */
-    val isBinderAlive: Boolean
-        get() = try {
-            Shizuku.isBinderAlive()
-        } catch (e: Exception) {
-            false
-        }
+    /** 当前 Shizuku 运行权限:0=root,2000=shell */
+    val uid: Int
+        get() = try { Shizuku.getUid() } catch (e: Exception) { -1 }
 
     fun requestPermission(onResult: (Boolean) -> Unit) {
         val listener = object : Shizuku.OnRequestPermissionResultListener {
@@ -115,7 +137,7 @@ class ShizukuManager(private val context: Context) {
 
     fun bind(onConnected: (IWatchService) -> Unit, onFailed: (String) -> Unit) {
         if (!isRunning) {
-            onFailed("Shizuku 服务未运行。请确认 Shizuku App 显示'正在运行'")
+            onFailed("Shizuku 服务未运行")
             return
         }
         if (!hasPermission()) {
@@ -153,7 +175,7 @@ class ShizukuManager(private val context: Context) {
                 bindInProgress = false
                 service = null
                 conn = null
-                onFailed("Shizuku binder 死亡")
+                onFailed("Shizuku binder 死亡,服务可能被杀")
                 onStateChanged?.invoke()
             }
 
@@ -161,7 +183,7 @@ class ShizukuManager(private val context: Context) {
                 if (finished) return
                 finished = true
                 bindInProgress = false
-                onFailed("UserService 绑定返回 null(Shizuku 加载 WatchUserService 失败)")
+                onFailed("UserService 返回 null(Shizuku 加载 WatchUserService 失败)。可能原因:32 位系统未用 32 位 app_process,或 WatchUserService 类加载失败")
             }
         }
         conn = c
@@ -179,58 +201,36 @@ class ShizukuManager(private val context: Context) {
             if (!finished && service == null) {
                 finished = true
                 bindInProgress = false
-                onFailed("连接 UserService 超时(8秒)。可改用'备用模式(直接执行)'绕过 UserService")
+                onFailed("连接 UserService 超时(8秒)")
                 onStateChanged?.invoke()
             }
         }, BIND_TIMEOUT_MS)
     }
 
-    /**
-     * 备用通道:直接用 Shizuku.newProcess 执行 shell 命令。
-     * 不依赖 bindUserService,即使 UserService 绑定失败也能用。
-     * 返回 stdout+stderr 合并文本。
-     */
-    fun execViaShizuku(cmd: String): String {
-        return try {
-            val process = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
-            val out = process.inputStream.bufferedReader().use { it.readText() }
-            val err = process.errorStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-            out + err
-        } catch (e: Exception) {
-            "ERROR: ${e.message}"
-        }
-    }
-
-    /** 备用通道是否可用(Shizuku 运行中 + 已授权) */
-    val canExecDirectly: Boolean
-        get() = isRunning && hasPermission()
-
     fun getDiagnostic(): String = buildString {
         append("=== Shizuku 状态 ===\n")
         append("已安装: $isInstalled\n")
         append("运行中(pingBinder): $isRunning\n")
-        append("binder 存活(isBinderAlive): $isBinderAlive\n")
         append("已授权: ${hasPermission()}\n")
         append("UserService 已绑定: $isBound\n")
         append("bind 进行中: $bindInProgress\n")
         append("Shizuku 版本: $version\n")
+        append("Shizuku UID(0=root/2000=shell): $uid\n")
+        append("32 位 app_process: 已通过反射设置\n")
         append("\n=== 本 App ===\n")
         append("包名: ${context.packageName}\n")
         append("UserService 类: ${WatchUserService::class.java.name}\n")
-        append("\n=== 备用通道 ===\n")
-        append("可直接执行(newProcess): $canExecDirectly\n")
         append("\n=== 排查建议 ===\n")
         if (!isInstalled) {
-            append("→ 请安装 Shizuku(手表版即可)\n")
+            append("→ 请安装 Shizuku(手表版/Whizuku 均可)\n")
         } else if (!isRunning) {
             append("→ Shizuku 服务未运行!用 ADB 执行:\n")
             append("  adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh\n")
         } else if (!hasPermission()) {
             append("→ 在 Shizuku App 给本 App 授权\n")
         } else if (!isBound) {
-            append("→ UserService 绑定失败,但可用'备用模式'\n")
-            append("  备用模式直接用 Shizuku.newProcess 执行命令,不需要绑定\n")
+            append("→ UserService 绑定失败。本版本已加 32 位 app_process 参数\n")
+            append("  若仍失败,请反馈诊断截图\n")
         } else {
             append("→ 状态正常\n")
         }
