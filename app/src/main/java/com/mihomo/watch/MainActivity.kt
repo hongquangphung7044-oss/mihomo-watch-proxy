@@ -60,9 +60,47 @@ private fun MainScreen(vm: AppViewModel) {
                 AppViewModel.ShizukuState.NOT_INSTALLED -> "Shizuku 未安装" to Color(0xFFE53935)
                 AppViewModel.ShizukuState.NOT_RUNNING -> "Shizuku 未运行" to Color(0xFFFB8C00)
                 AppViewModel.ShizukuState.NO_PERMISSION -> "Shizuku 未授权" to Color(0xFFFB8C00)
-                AppViewModel.ShizukuState.READY -> "Shizoku 就绪" to Color(0xFF43A047)
+                AppViewModel.ShizukuState.READY -> if (vm.isBound) "Shizuku 已就绪" to Color(0xFF43A047)
+                    else "Shizuku 已授权/未绑定" to Color(0xFFFB8C00)
             }
             StatusBadge(text, color)
+        }
+
+        // 已授权但 UserService 未绑定时,显示重新连接按钮
+        if (vm.shizukuState == AppViewModel.ShizukuState.READY && !vm.isBound) {
+            item {
+                Chip(
+                    onClick = { vm.reconnect() },
+                    label = { Text("重新连接 UserService") },
+                    colors = ChipDefaults.primaryChipColors()
+                )
+            }
+            item { HintText("若反复失败,点下方'诊断'看详情") }
+        }
+
+        // 诊断按钮(始终显示,排错用)
+        item {
+            Chip(
+                onClick = { vm.toggleDiagnostic() },
+                label = { Text(if (vm.showDiagnostic) "隐藏诊断" else "诊断") },
+                colors = ChipDefaults.secondaryChipColors()
+            )
+        }
+        if (vm.showDiagnostic) {
+            item {
+                Text(
+                    text = vm.diagnostic,
+                    fontSize = 9.sp,
+                    color = Color(0xFFCCCCCC),
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+            }
+            item {
+                Chip(
+                    onClick = { vm.refreshDiagnostic() },
+                    label = { Text("刷新诊断") }
+                )
+            }
         }
 
         // 未授权时显示授权按钮
@@ -76,12 +114,14 @@ private fun MainScreen(vm: AppViewModel) {
             }
         }
 
-        // Shizoku 未就绪时的提示
+        // Shizuku 未就绪时的提示
         if (vm.shizukuState == AppViewModel.ShizukuState.NOT_INSTALLED) {
             item { HintText("请先在手表安装 Shizuku 并通过 ADB 启动") }
         }
         if (vm.shizukuState == AppViewModel.ShizukuState.NOT_RUNNING) {
-            item { HintText("请打开 Shizuku App 启动服务") }
+            item { HintText("Shizuku 服务未运行,需用 ADB 启动(不是只授权)") }
+            item { HintText("电脑连手表 ADB 后执行:") }
+            item { HintText("adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh") }
         }
 
         // 订阅链接输入框(只在 Shizuku 就绪后显示)

@@ -21,12 +21,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val subscription = SubscriptionManager()
     private val api = MihomoApi()
 
+    init {
+        // 注册 Shizuku binder 监听:Shizuku 启动/死亡时自动刷新状态
+        shizuku.onStateChanged = { refreshShizuku() }
+        shizuku.registerBinderListeners()
+    }
+
     enum class ShizukuState { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, READY }
 
     var shizukuState by mutableStateOf(ShizukuState.NOT_INSTALLED)
         private set
     var service by mutableStateOf<IWatchService?>(null)
         private set
+    /** UserService 是否已绑定(独立于 shizukuState,精确反映可操作性) */
+    val isBound: Boolean get() = service != null
     var isRunning by mutableStateOf(false)
         private set
     var subscriptionUrl by mutableStateOf("")
@@ -39,6 +47,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var error by mutableStateOf<String?>(null)
         private set
     var screen by mutableStateOf(Screen.Main)
+        private set
+    /** 诊断信息(展开后显示) */
+    var diagnostic by mutableStateOf("")
+        private set
+    var showDiagnostic by mutableStateOf(false)
         private set
 
     enum class Screen { Main, Nodes }
@@ -95,11 +108,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startProxy() {
-        val s = service ?: run { error = "Shizuku 未连接,请先授权"; return }
         val url = subscriptionUrl.trim()
         if (url.isEmpty()) { error = "请输入订阅链接"; return }
         loading = true
         error = null
+        val s = service
+        if (s != null) {
+            doStartProxy(s, url)
+        } else {
+            // service 未绑定,先尝试 bind,成功后继续启动
+            appendLog("Shizuku UserService 未绑定,尝试连接...")
+            shizuku.bind(
+                onConnected = { bound ->
+                    service = bound
+                    shizukuState = ShizukuState.READY
+                    appendLog("UserService 绑定成功")
+                    doStartProxy(bound, url)
+                },
+                onFailed = { msg ->
+                    loading = false
+                    error = msg
+                    refreshDiagnostic()
+                }
+            )
+        }
+    }
+
+    private fun doStartProxy(s: IWatchService, url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 appendLog("下载订阅: $url")
@@ -117,6 +152,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 loading = false
             }
         }
+    }
+
+    /** 手动重新连接 Shizuku UserService(用户点"重新连接"时调用) */
+    fun reconnect() {
+        error = null
+        appendLog("手动重新连接 Shizuku...")
+        shizuku.unbind()
+        service = null
+        shizuku.bind(
+            onConnected = { s ->
+                service = s
+                shizukuState = ShizukuState.READY
+                isRunning = controller.isRunning(s)
+                appendLog("重新连接成功")
+            },
+            onFailed = { msg ->
+                error = msg
+                refreshDiagnostic()
+            }
+        )
+        refreshShizuku()
+    }
+
+    fun toggleDiagnostic() {
+        showDiagnostic = !showDiagnostic
+        if (showDiagnostic) refreshDiagnostic()
+    }
+
+    fun refreshDiagnostic() {
+        diagnostic = shizuku.getDiagnostic()
     }
 
     fun stopProxy() {
@@ -165,7 +230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * 不重启 mihomo 进程,不断流。
      */
     fun updateSubscription() {
-        val s = service ?: run { error = "Shizuku 未连接"; return }
+        val s = service ?: run { error = "Shizuku UserService 未绑定,请先点启动"; return }
         val url = subscriptionUrl.trim()
         if (url.isEmpty()) { error = "请输入订阅链接"; return }
         updating = true
