@@ -17,7 +17,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.material.*
 
 class MainActivity : ComponentActivity() {
@@ -25,7 +24,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                val vm: AppViewModel = viewModel()
+                // 不用 viewModel()(inline 函数在某些版本组合下内联失败),
+                // 直接 remember 构造 AppViewModel,Wear OS 单屏够用
+                val vm = remember { AppViewModel(application) }
                 AppRoot(vm)
             }
         }
