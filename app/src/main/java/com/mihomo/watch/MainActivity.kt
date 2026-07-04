@@ -45,6 +45,7 @@ private fun AppRoot(vm: AppViewModel) {
 @Composable
 private fun MainScreen(vm: AppViewModel) {
     val listState = rememberScalingLazyListState()
+    val ctx = LocalContext.current  // 在 composable 作用域取,onClick 里用
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -90,7 +91,7 @@ private fun MainScreen(vm: AppViewModel) {
             item {
                 Row {
                     Chip(
-                        onClick = { vm.setSubscriptionFromClipboard(getClipboard()) },
+                        onClick = { vm.setSubscriptionFromClipboard(getClipboard(ctx)) },
                         label = { Text("粘贴") }
                     )
                     Spacer(Modifier.width(8.dp))
@@ -326,9 +327,7 @@ private fun HintText(text: String) {
     )
 }
 
-@Composable
-private fun getClipboard(): String? {
-    val ctx = LocalContext.current
+private fun getClipboard(ctx: Context): String? {
     return try {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.primaryClip?.getItemAt(0)?.text?.toString()
