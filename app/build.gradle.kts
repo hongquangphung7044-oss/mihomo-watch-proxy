@@ -44,10 +44,16 @@ android {
         jvmTarget = "17"
     }
 
-    // 关键: AGP 7+ 默认关闭 aidl/buildConfig,必须显式启用
+    // 关键: AGP 7+ 默认关闭 aidl/buildConfig/compose,必须显式启用
     buildFeatures {
+        compose = true
         aidl = true
         buildConfig = true
+    }
+
+    // Kotlin 1.9.24 ↔ Compose Compiler 1.5.14(必须严格匹配)
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     packaging {
