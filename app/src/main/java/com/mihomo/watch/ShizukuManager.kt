@@ -115,12 +115,9 @@ class ShizukuManager(private val context: Context) {
         }
         conn = c
         try {
-            // bindUserService 返回 false 表示绑定失败
-            val ok = Shizuku.bindUserService(userServiceArgs, c)
-            if (!ok) {
-                onFailed("bindUserService 返回 false,可能 Shizuku 未运行")
-                conn = null
-            }
+            // Shizuku 13.x bindUserService 返回 void,绑定结果通过 ServiceConnection 回调
+            // Shizuku 未运行时会抛异常;绑定失败会回调 onNullBinding/onBindingDied
+            Shizuku.bindUserService(userServiceArgs, c)
         } catch (e: Exception) {
             onFailed("bindUserService 异常: ${e.message}")
             conn = null
