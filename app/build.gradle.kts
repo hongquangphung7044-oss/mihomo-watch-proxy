@@ -44,6 +44,12 @@ android {
         jvmTarget = "17"
     }
 
+    // 关键: AGP 7+ 默认关闭 aidl/buildConfig,必须显式启用
+    buildFeatures {
+        aidl = true
+        buildConfig = true
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }

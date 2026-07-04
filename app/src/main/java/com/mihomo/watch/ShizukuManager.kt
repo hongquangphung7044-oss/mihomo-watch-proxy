@@ -90,7 +90,10 @@ class ShizukuManager(private val context: Context) {
             return
         }
         // 已连接,直接复用
-        service?.let { onConnected(it); return }
+        service?.let { s ->
+            onConnected(s)
+            return
+        }
 
         val c = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
