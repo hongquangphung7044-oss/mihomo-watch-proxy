@@ -50,11 +50,13 @@ android {
 }
 
 dependencies {
-    // Wear OS Compose UI
-    implementation("androidx.wear.compose:compose:1.3.1")
+    // Wear OS Compose UI (注意 artifact 名: compose-material / compose-foundation, 不是 compose)
+    implementation("androidx.wear.compose:compose-material:1.3.1")
+    implementation("androidx.wear.compose:compose-foundation:1.3.1")
     implementation("androidx.activity:activity-compose:1.8.2")
     implementation("androidx.compose.ui:ui:1.6.6")
     implementation("androidx.compose.material:material:1.6.6")
+    implementation("androidx.compose.foundation:foundation:1.6.6")
 
     // 生命周期
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
