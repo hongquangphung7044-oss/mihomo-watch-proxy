@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 字母 M 代表 Mihomo -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,32 L28,76 L36,76 L36,46 L54,66 L72,46 L72,76 L80,76 L80,32 L72,32 L54,54 L36,32 Z"/>
+</vector>

@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+app/build/
+*.iml
+local.properties
+
+# Android
+.cxx/
+captures/
+
+# IDE
+.idea/
+*.swp
+
+# mihomo 二进制(Actions 构建时下载,不入仓库)
+app/src/main/assets/mihomo
+
+# 不要 commit APK
+*.apk
+*.aab
+
+# misc
+.DS_Store

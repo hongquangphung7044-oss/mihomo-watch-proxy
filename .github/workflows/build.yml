@@ -1,0 +1,63 @@
+name: Build Wear OS APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+
+      - name: Download mihomo armv7 binary (Android 专用 32位)
+        run: |
+          set -e
+          # 从 MetaCubeX/mihomo 最新 release 找 android-armv7 二进制
+          URL=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest \
+                | grep "browser_download_url" \
+                | grep "mihomo-android-armv7-" \
+                | grep '\.gz"' \
+                | cut -d '"' -f4 | head -1)
+          echo "下载: $URL"
+          curl -sL -o mihomo.gz "$URL"
+          gunzip -f mihomo.gz
+          chmod 755 mihomo
+          file mihomo
+          mkdir -p app/src/main/assets
+          cp mihomo app/src/main/assets/mihomo
+          ls -lh app/src/main/assets/mihomo
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', 'gradle.properties') }}
+          restore-keys: gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-watch-proxy-armv7
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 90
