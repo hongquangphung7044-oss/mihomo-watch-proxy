@@ -23,6 +23,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val shizuku = ShizukuManager(app)
     private val controller = MihomoController(app)
     private val subscription = SubscriptionManager()
+    private val subscriptionCache = SubscriptionCache(app)
     private val subStore = SubscriptionStore(app)
     private val prefs = app.getSharedPreferences("app_state", android.content.Context.MODE_PRIVATE)
     private val api = MihomoApi()
@@ -334,9 +335,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun doStartProxy(runner: CommandRunner, url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                appendLog("下载订阅: $url")
-                val raw = subscription.download(url)
-                appendLog("订阅下载完成,${raw.length} 字节")
+                // 优先用本地缓存的订阅(避免每次启动都重新下载)
+                var raw = subscriptionCache.load(url)
+                if (raw != null) {
+                    appendLog("使用缓存的订阅,${raw.length} 字节(如需更新点'更新订阅')")
+                } else {
+                    appendLog("首次下载订阅: $url")
+                    raw = subscription.download(url)
+                    appendLog("订阅下载完成,${raw.length} 字节")
+                    subscriptionCache.save(url, raw)
+                }
                 val config = subscription.injectControllerConfig(raw)
                 appendLog("配置生成完成,启动 mihomo...")
                 controller.start(runner, config)
@@ -477,6 +485,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 appendLog("更新订阅: $url")
                 val raw = subscription.download(url)
+                subscriptionCache.save(url, raw)  // 更新缓存
                 val config = subscription.injectControllerConfig(raw)
                 val ok = controller.updateConfigAndReload(runner, config)
                 if (ok) {
