@@ -19,12 +19,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val shizuku = ShizukuManager(app)
     private val controller = MihomoController(app)
     private val subscription = SubscriptionManager()
+    private val subStore = SubscriptionStore(app)
     private val api = MihomoApi()
 
     init {
         // 注册 Shizuku binder 监听:Shizuku 启动/死亡时自动刷新状态
         shizuku.onStateChanged = { refreshShizuku() }
         shizuku.registerBinderListeners()
+        // 加载已保存的订阅列表
+        savedSubscriptions = subStore.list()
     }
 
     enum class ShizukuState { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, READY }
@@ -67,6 +70,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     /** 是否正在更新订阅 */
     var updating by mutableStateOf(false)
+        private set
+    /** 已保存的订阅列表(多订阅管理) */
+    var savedSubscriptions by mutableStateOf<List<SavedSubscription>>(emptyList())
         private set
 
     fun refreshShizuku() {
@@ -133,6 +139,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setSubscriptionFromClipboard(text: String?) {
         if (!text.isNullOrBlank()) subscriptionUrl = text.trim()
+    }
+
+    /** 保存当前订阅链接(名字自动取 URL 域名,同名覆盖) */
+    fun saveCurrentSubscription() {
+        val url = subscriptionUrl.trim()
+        if (url.isEmpty()) {
+            error = "订阅链接为空,无法保存"
+            return
+        }
+        val name = try {
+            java.net.URL(url).host
+        } catch (e: Exception) {
+            "订阅${savedSubscriptions.size + 1}"
+        }
+        subStore.save(name, url)
+        savedSubscriptions = subStore.list()
+        appendLog("已保存订阅: $name")
+    }
+
+    /** 载入已保存的订阅到输入框(不自动启动,用户再点启动) */
+    fun loadSubscription(sub: SavedSubscription) {
+        subscriptionUrl = sub.url
+        appendLog("已载入订阅: ${sub.name}")
+    }
+
+    /** 删除已保存的订阅 */
+    fun deleteSubscription(name: String) {
+        subStore.delete(name)
+        savedSubscriptions = subStore.list()
+        appendLog("已删除订阅: $name")
     }
 
     fun startProxy() {

@@ -144,11 +144,51 @@ private fun MainScreen(vm: AppViewModel) {
                         onClick = { vm.setSubscriptionFromClipboard(getClipboard(ctx)) },
                         label = { Text("粘贴") }
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Chip(
+                        onClick = { vm.saveCurrentSubscription() },
+                        label = { Text("保存") },
+                        colors = ChipDefaults.primaryChipColors()
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Chip(
                         onClick = { vm.subscriptionUrl = "" },
                         label = { Text("清空") }
                     )
+                }
+            }
+
+            // 已保存订阅列表(点击载入,× 删除)
+            if (vm.savedSubscriptions.isNotEmpty()) {
+                item { HintText("已保存订阅 (点选载入)") }
+                vm.savedSubscriptions.forEach { sub ->
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Chip(
+                                onClick = { vm.loadSubscription(sub) },
+                                label = {
+                                    Text(
+                                        text = sub.name,
+                                        fontSize = 10.sp,
+                                        maxLines = 1,
+                                        color = if (sub.url == vm.subscriptionUrl.trim())
+                                            Color.Black else Color.White
+                                    )
+                                },
+                                colors = if (sub.url == vm.subscriptionUrl.trim())
+                                    ChipDefaults.primaryChipColors()
+                                else ChipDefaults.secondaryChipColors(),
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Chip(
+                                onClick = { vm.deleteSubscription(sub.name) },
+                                label = { Text("×", color = Color(0xFFE53935), fontSize = 14.sp) }
+                            )
+                        }
+                    }
                 }
             }
 
