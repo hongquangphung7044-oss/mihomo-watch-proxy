@@ -70,6 +70,9 @@ dependencies {
     implementation("androidx.compose.material:material:1.6.6")
     implementation("androidx.compose.foundation:foundation:1.6.6")
 
+    // Wear OS Ongoing Activity API - 表盘底部"运行中"指示器(三星手表底部圆圈)
+    implementation("androidx.wear:wear-ongoing:1.0.0")
+
     // 生命周期
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")

@@ -26,6 +26,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val subStore = SubscriptionStore(app)
     private val prefs = app.getSharedPreferences("app_state", android.content.Context.MODE_PRIVATE)
     private val api = MihomoApi()
+    private val indicator = ProxyIndicator(app)
 
     companion object {
         private const val KEY_LAST_URL = "last_subscription_url"
@@ -117,7 +118,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // 有可用 runner 时刷新 mihomo 运行状态
         val runner = getRunner()
         if (runner != null) {
+            val wasRunning = isRunning
             isRunning = controller.isRunning(runner)
+            // mihomo 在跑但指示器没显示(可能 App 重启了):补显示
+            if (isRunning && !wasRunning) indicator.show("mihomo 代理运行中")
             // 开机自启:Shizuku 就绪 + mihomo 没跑 + 有保存的订阅 + 用户开了自启
             if (!isRunning && autoStart && subscriptionUrl.isNotBlank() && !autoStartAttempted) {
                 autoStartAttempted = true
@@ -351,6 +355,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     appendLog("启动成功,但 API 未就绪(可稍后重试选择节点)")
                 }
+                // 显示表盘"运行中"指示器(三星手表底部圆圈)
+                indicator.show("mihomo 代理运行中")
             } catch (e: Exception) {
                 error = "启动失败: ${e.message}"
                 appendLog(controller.tailLog(runner))
@@ -409,6 +415,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 controller.stop(runner)
                 isRunning = false
                 groups = emptyList()
+                indicator.hide()  // 隐藏表盘指示器
                 appendLog("已停止,代理已清除")
             } catch (e: Exception) {
                 error = "停止失败: ${e.message}"

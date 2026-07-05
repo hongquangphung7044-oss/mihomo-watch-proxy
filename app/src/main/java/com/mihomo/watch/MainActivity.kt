@@ -1,10 +1,14 @@
 package com.mihomo.watch
 
+import android.Manifest
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
@@ -18,17 +22,37 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
 
 class MainActivity : ComponentActivity() {
+
+    // 通知权限申请(Android 13+ 必需,用于表盘"运行中"指示器)
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> /* 不管授权与否都不阻塞,指示器尽力而为 */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestNotificationPermission()
         setContent {
             MaterialTheme {
                 // 不用 viewModel()(inline 函数在某些版本组合下内联失败),
                 // 直接 remember 构造 AppViewModel,Wear OS 单屏够用
                 val vm = remember { AppViewModel(application) }
                 AppRoot(vm)
+            }
+        }
+    }
+
+    /** Android 13+ 必须运行时申请 POST_NOTIFICATIONS,否则 ongoing notification 不显示 */
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
     }

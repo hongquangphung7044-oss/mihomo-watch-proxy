@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 通知:表盘"运行中"指示器需要(Android 13+ 需运行时申请) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 声明是 Wear OS 应用 -->
     <uses-feature android:name="android.hardware.type.watch" />
 
