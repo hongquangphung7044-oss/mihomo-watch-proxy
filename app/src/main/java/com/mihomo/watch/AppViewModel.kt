@@ -55,6 +55,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var autoStart by mutableStateOf(prefs.getBoolean(KEY_AUTOSTART, false))
         private set
 
+    /** 当前订阅链接(输入框内容,持久化最后用过的) */
+    var subscriptionUrl by mutableStateOf("")
+
     fun toggleAutoStart() {
         autoStart = !autoStart
         prefs.edit().putBoolean(KEY_AUTOSTART, autoStart).apply()
@@ -71,7 +74,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val isBound: Boolean get() = service != null
     var isRunning by mutableStateOf(false)
         private set
-    var subscriptionUrl by mutableStateOf("")
     var log by mutableStateOf("")
         private set
     var groups by mutableStateOf<List<MihomoApi.Proxy>>(emptyList())
