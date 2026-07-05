@@ -1,11 +1,9 @@
 package com.mihomo.watch
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
@@ -25,6 +23,7 @@ import androidx.wear.ongoing.OngoingActivity
  *  - Android 13+(API 33)需要 POST_NOTIFICATIONS 运时权限,由 MainActivity 申请
  *  - 不需要 ForegroundService,纯 ongoing notification + OngoingActivity 更轻量
  *  - 通知频道必须先创建才能发通知
+ *  - setTouchIntent 必须传非空 PendingIntent,否则 OngoingActivity 抛异常
  */
 class ProxyIndicator(private val context: Context) {
 
@@ -42,6 +41,13 @@ class ProxyIndicator(private val context: Context) {
     /** 显示表盘指示器 */
     fun show(text: String = "代理运行中") {
         ensureChannel()
+
+        // 点指示器回到 App 的 PendingIntent(必须非空,OngoingActivity.setTouchIntent 要求)
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: return  // 极少情况拿不到 launch intent,直接放弃
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val touchIntent = PendingIntent.getActivity(context, 0, launchIntent, flags)
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)  // 用 App 图标做指示器图标
             .setContentTitle("mihomo 代理")
@@ -50,38 +56,22 @@ class ProxyIndicator(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)  // 低优先级,不响铃不弹窗
             .setShowWhen(false)
-
-        // 点指示器回到 App
-        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        if (launchIntent != null) {
-            val pi = PendingIntent.getActivity(
-                context, 0, launchIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            builder.setContentIntent(pi)
-        }
+            .setContentIntent(touchIntent)
 
         // 配 OngoingActivity:表盘底部圆圈 + 启动器"最近用过"显示
         val ongoingActivity = OngoingActivity.Builder(
             context, NOTIFICATION_ID, builder
         )
-            .setAnimatedIcon(R.drawable.ic_launcher_foreground)  // 活动模式图标(可动画)
+            .setAnimatedIcon(R.drawable.ic_launcher_foreground)  // 活动模式图标
             .setStaticIcon(R.drawable.ic_launcher_foreground)    // 环境模式(息屏)静态图标
-            .setTouchIntent(launchIntent?.let {
-                PendingIntent.getActivity(
-                    context, 1, it,
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-            })
+            .setTouchIntent(touchIntent)  // 必须非空
             .setStatus(OngoingActivity.Status.Builder()
                 .addTemplate(text)
                 .build())
             .build()
 
+        // apply 把 OngoingActivity 配置写回 builder,并发布通知
         ongoingActivity.apply(context)
-
-        // apply 内部已发通知,但保险起见再 notify 一次(某些 Wear OS 版本 apply 行为不一)
-        notificationManager.notify(NOTIFICATION_ID, builder.build())
     }
 
     /** 隐藏表盘指示器 */
