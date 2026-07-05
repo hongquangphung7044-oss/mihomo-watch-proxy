@@ -17,6 +17,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.wear.compose.material.*
 
 class MainActivity : ComponentActivity() {
@@ -36,9 +37,57 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppRoot(vm: AppViewModel) {
     LaunchedEffect(Unit) { vm.refreshShizuku() }
-    when (vm.screen) {
-        AppViewModel.Screen.Main -> MainScreen(vm)
-        AppViewModel.Screen.Nodes -> NodesScreen(vm)
+    Box(Modifier.fillMaxSize()) {
+        when (vm.screen) {
+            AppViewModel.Screen.Main -> MainScreen(vm)
+            AppViewModel.Screen.Nodes -> NodesScreen(vm)
+        }
+        if (vm.showSaveDialog) SaveSubscriptionDialog(vm)
+    }
+}
+
+@Composable
+private fun SaveSubscriptionDialog(vm: AppViewModel) {
+    Dialog(onDismissRequest = { vm.cancelSaveDialog() }) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .background(Color(0xFF222222))
+                .padding(10.dp)
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("保存订阅", color = Color(0xFFFFC107), fontSize = 13.sp)
+                Spacer(Modifier.height(6.dp))
+                Text("名字:", color = Color(0xFFCCCCCC), fontSize = 10.sp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF333333))
+                        .padding(6.dp)
+                ) {
+                    BasicTextField(
+                        value = vm.editingSubName,
+                        onValueChange = { vm.updateEditingName(it) },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 11.sp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    Chip(
+                        onClick = { vm.confirmSaveSubscription() },
+                        label = { Text("确认", fontSize = 11.sp) },
+                        colors = ChipDefaults.primaryChipColors()
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Chip(
+                        onClick = { vm.cancelSaveDialog() },
+                        label = { Text("取消", fontSize = 11.sp) }
+                    )
+                }
+            }
+        }
     }
 }
 

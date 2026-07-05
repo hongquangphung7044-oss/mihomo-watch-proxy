@@ -180,22 +180,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!text.isNullOrBlank()) subscriptionUrl = text.trim()
     }
 
-    /** 保存当前订阅链接(名字自动取 URL 域名,同名覆盖) */
+    /** 保存订阅对话框:是否显示 + 编辑中的名字 */
+    var showSaveDialog by mutableStateOf(false)
+        private set
+    var editingSubName by mutableStateOf("")
+        private set
+
+    /** 触发保存对话框(预填 URL 域名作默认名字) */
     fun saveCurrentSubscription() {
         val url = subscriptionUrl.trim()
         if (url.isEmpty()) {
             error = "订阅链接为空,无法保存"
             return
         }
-        val name = try {
+        editingSubName = try {
             java.net.URL(url).host
         } catch (e: Exception) {
             "订阅${savedSubscriptions.size + 1}"
         }
-        subStore.save(name, url)
-        savedSubscriptions = subStore.list()
-        appendLog("已保存订阅: $name")
+        showSaveDialog = true
     }
+
+    /** 确认保存(用对话框里的名字) */
+    fun confirmSaveSubscription() {
+        val name = editingSubName.trim().ifEmpty { "未命名" }
+        val url = subscriptionUrl.trim()
+        if (url.isNotEmpty()) {
+            subStore.save(name, url)
+            savedSubscriptions = subStore.list()
+            appendLog("已保存订阅: $name")
+        }
+        showSaveDialog = false
+        editingSubName = ""
+    }
+
+    fun cancelSaveDialog() {
+        showSaveDialog = false
+        editingSubName = ""
+    }
+
+    fun updateEditingName(s: String) { editingSubName = s }
 
     /** 载入已保存的订阅到输入框(不自动启动,用户再点启动) */
     fun loadSubscription(sub: SavedSubscription) {
@@ -249,8 +273,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val config = subscription.injectControllerConfig(raw)
                 appendLog("配置生成完成,启动 mihomo...")
                 controller.start(runner, config)
+                // 等 mihomo API 就绪(启动后加载配置需要时间,立即调 API 会失败)
+                appendLog("等待 mihomo API 就绪...")
+                var ready = false
+                for (i in 1..20) {  // 最多等 10 秒
+                    try {
+                        api.getProxies()
+                        ready = true
+                        break
+                    } catch (e: Exception) {
+                        Thread.sleep(500)
+                    }
+                }
                 isRunning = true
-                appendLog("启动成功,全局代理: ${MihomoController.PROXY_ADDR}")
+                if (ready) {
+                    appendLog("启动成功,API 就绪,全局代理: ${MihomoController.PROXY_ADDR}")
+                } else {
+                    appendLog("启动成功,但 API 未就绪(可稍后重试选择节点)")
+                }
             } catch (e: Exception) {
                 error = "启动失败: ${e.message}"
                 appendLog(controller.tailLog(runner))
