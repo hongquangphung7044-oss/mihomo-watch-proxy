@@ -136,6 +136,24 @@ private fun MainScreen(vm: AppViewModel) {
 
         // 订阅链接输入框(只在 Shizuku 就绪后显示)
         if (vm.shizukuState == AppViewModel.ShizukuState.READY) {
+            // 开机自启开关
+            item {
+                Chip(
+                    onClick = { vm.toggleAutoStart() },
+                    label = {
+                        Text(
+                            if (vm.autoStart) "✓ 开机自启: 开" else "开机自启: 关",
+                            fontSize = 10.sp
+                        )
+                    },
+                    colors = if (vm.autoStart) ChipDefaults.primaryChipColors()
+                    else ChipDefaults.secondaryChipColors()
+                )
+            }
+            if (vm.autoStart) {
+                item { HintText("App 启动时若 Shizuku 就绪+有订阅,自动开代理") }
+            }
+
             item { HintText("订阅链接") }
             item { SubInput(vm) }
             item {

@@ -24,10 +24,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val controller = MihomoController(app)
     private val subscription = SubscriptionManager()
     private val subStore = SubscriptionStore(app)
+    private val prefs = app.getSharedPreferences("app_state", android.content.Context.MODE_PRIVATE)
     private val api = MihomoApi()
 
     /** 已保存的订阅列表(多订阅管理) */
     var savedSubscriptions by mutableStateOf<List<SavedSubscription>>(emptyList())
+        private set
+
+    /** 是否按延迟升序排序(true)还是原始顺序(false) */
+    var sortByDelay by mutableStateOf(prefs.getBoolean(KEY_SORT_BY_DELAY, true))
         private set
 
     init {
@@ -36,6 +41,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         shizuku.registerBinderListeners()
         // 加载已保存的订阅列表
         savedSubscriptions = subStore.list()
+        // 恢复上次使用的订阅链接(删后台重启不用重输)
+        subscriptionUrl = prefs.getString(KEY_LAST_URL, "") ?: ""
+    }
+
+    companion object {
+        private const val KEY_LAST_URL = "last_subscription_url"
+        private const val KEY_SORT_BY_DELAY = "sort_by_delay"
+        private const val KEY_AUTOSTART = "autostart_mihomo"
+    }
+
+    /** 是否启用开机自启 mihomo(Shizuku 就绪 + 有保存的订阅时自动启动) */
+    var autoStart by mutableStateOf(prefs.getBoolean(KEY_AUTOSTART, false))
+        private set
+
+    fun toggleAutoStart() {
+        autoStart = !autoStart
+        prefs.edit().putBoolean(KEY_AUTOSTART, autoStart).apply()
+        appendLog("开机自启: ${if (autoStart) "开" else "关"}")
     }
 
     enum class ShizukuState { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, READY }
@@ -73,9 +96,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 是否正在批量测延迟 */
     var testingDelays by mutableStateOf(false)
         private set
-    /** 是否按延迟升序排序(true)还是原始顺序(false) */
-    var sortByDelay by mutableStateOf(true)
-        private set
     /** 是否正在更新订阅 */
     var updating by mutableStateOf(false)
         private set
@@ -93,8 +113,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             connectShizuku()
         }
         // 有可用 runner 时刷新 mihomo 运行状态
-        getRunner()?.let { isRunning = controller.isRunning(it) }
+        val runner = getRunner()
+        if (runner != null) {
+            isRunning = controller.isRunning(runner)
+            // 开机自启:Shizuku 就绪 + mihomo 没跑 + 有保存的订阅 + 用户开了自启
+            if (!isRunning && autoStart && subscriptionUrl.isNotBlank() && !autoStartAttempted) {
+                autoStartAttempted = true
+                appendLog("检测到自启条件满足,自动启动代理...")
+                startProxy()
+            }
+        }
     }
+
+    /** 自启是否已尝试过(避免反复自启) */
+    private var autoStartAttempted = false
 
     /** 是否已尝试 bind(避免反复自动 bind) */
     private var bindAttempted = false
@@ -179,6 +211,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startProxy() {
         val url = subscriptionUrl.trim()
         if (url.isEmpty()) { error = "请输入订阅链接"; return }
+        // 持久化订阅链接,删后台重启不用重输
+        prefs.edit().putString(KEY_LAST_URL, url).apply()
         loading = true
         error = null
 
@@ -389,8 +423,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 切换排序方式 */
-    fun toggleSort() { sortByDelay = !sortByDelay }
+    /** 切换排序方式(持久化,重启 App 保留偏好) */
+    fun toggleSort() {
+        sortByDelay = !sortByDelay
+        prefs.edit().putBoolean(KEY_SORT_BY_DELAY, sortByDelay).apply()
+    }
 
     /**
      * 对某分组的节点列表按当前排序方式返回。
