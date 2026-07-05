@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知小图标:单色 M (Mihomo),24dp viewport 符合通知图标规范 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5,5 L5,19 L7.5,19 L7.5,10 L12,15 L16.5,10 L16.5,19 L19,19 L19,5 L16.5,5 L12,10 L7.5,5 Z"/>
+</vector>

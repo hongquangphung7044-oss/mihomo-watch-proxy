@@ -116,7 +116,8 @@ class MihomoController(private val context: Context) {
     fun stop(runner: CommandRunner) {
         try { runner("settings delete global http_proxy") } catch (_: Exception) {}
         try { runner("settings put global http_proxy :0") } catch (_: Exception) {}
-        try { runner("pkill -f mihomo 2>/dev/null; true") } catch (_: Exception) {}
+        // SIGKILL 立即杀,避免 SIGTERM 退出延迟导致 isRunning 误判还在跑
+        try { runner("pkill -9 -f mihomo 2>/dev/null; sleep 0.3; pkill -9 -f mihomo 2>/dev/null; true") } catch (_: Exception) {}
     }
 
     /** mihomo 是否在运行 */

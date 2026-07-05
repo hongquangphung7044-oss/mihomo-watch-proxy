@@ -26,7 +26,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val subStore = SubscriptionStore(app)
     private val prefs = app.getSharedPreferences("app_state", android.content.Context.MODE_PRIVATE)
     private val api = MihomoApi()
-    private val indicator = ProxyIndicator(app)
+    private val indicator = ProxyIndicator(app)  // 诊断用,实际通知由 ForegroundService 管理
 
     companion object {
         private const val KEY_LAST_URL = "last_subscription_url"
@@ -120,8 +120,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (runner != null) {
             val wasRunning = isRunning
             isRunning = controller.isRunning(runner)
-            // mihomo 在跑但指示器没显示(可能 App 重启了):补显示
-            if (isRunning && !wasRunning) indicator.show("mihomo 代理运行中")
+            // mihomo 在跑但前台服务没启动(App 重启场景):补启动前台服务显示通知
+            if (isRunning && !wasRunning) {
+                MihomoForegroundService.start(getApplication())
+                appendLog("检测到 mihomo 在运行,已恢复通知")
+            }
             // 开机自启:Shizuku 就绪 + mihomo 没跑 + 有保存的订阅 + 用户开了自启
             if (!isRunning && autoStart && subscriptionUrl.isNotBlank() && !autoStartAttempted) {
                 autoStartAttempted = true
@@ -355,8 +358,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     appendLog("启动成功,但 API 未就绪(可稍后重试选择节点)")
                 }
-                // 显示表盘"运行中"指示器(三星手表底部圆圈)
-                indicator.show("mihomo 代理运行中")
+                // 显示表盘"运行中"指示器(三星手表底部圆圈) + 持久通知
+                MihomoForegroundService.start(getApplication())
             } catch (e: Exception) {
                 error = "启动失败: ${e.message}"
                 appendLog(controller.tailLog(runner))
@@ -412,10 +415,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // 先停前台服务(通知消失)
+                MihomoForegroundService.stop(getApplication())
+                // 停 mihomo 进程(SIGKILL 确保立即退出,避免状态残留)
                 controller.stop(runner)
+                // 等待 500ms 让进程真正退出,避免 refreshShizuku 误判还在跑
+                Thread.sleep(500)
                 isRunning = false
                 groups = emptyList()
-                indicator.hide()  // 隐藏表盘指示器
                 appendLog("已停止,代理已清除")
             } catch (e: Exception) {
                 error = "停止失败: ${e.message}"

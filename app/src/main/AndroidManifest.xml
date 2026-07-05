@@ -8,6 +8,11 @@
     <!-- 通知:表盘"运行中"指示器需要(Android 13+ 需运行时申请) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 前台服务:让代理通知持久化,App 被杀后通知仍在 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ 特定类型前服务权限(代理属于 specialUse) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <!-- 声明是 Wear OS 应用 -->
     <uses-feature android:name="android.hardware.type.watch" />
 
@@ -42,5 +47,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 前台服务:代理运行时显示持久通知 + 表盘指示器 -->
+        <!-- specialUse 类型:Android 14 要求代理/VPN 等非标准服务声明 -->
+        <service
+            android:name=".MihomoForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Proxy service for routing traffic through mihomo" />
+        </service>
     </application>
 </manifest>
