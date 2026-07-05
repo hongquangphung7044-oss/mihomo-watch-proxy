@@ -50,29 +50,31 @@ class ProxyIndicator(private val context: Context) {
         val touchIntent = PendingIntent.getActivity(context, 0, launchIntent, flags)
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)  // 用 App 图标做指示器图标
+            .setSmallIcon(android.R.drawable.ic_dialog_info)  // 用系统图标,避免 vector 兼容性问题
             .setContentTitle("mihomo 代理")
             .setContentText(text)
             .setOngoing(true)            // 关键:ongoing 通知才能配 OngoingActivity
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setPriority(NotificationCompat.PRIORITY_LOW)  // 低优先级,不响铃不弹窗
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)  // 默认优先级,确保显示
             .setShowWhen(false)
             .setContentIntent(touchIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // 锁屏也可见
 
         // 配 OngoingActivity:表盘底部圆圈 + 启动器"最近用过"显示
         val ongoingActivity = OngoingActivity.Builder(
             context, NOTIFICATION_ID, builder
         )
-            .setAnimatedIcon(R.drawable.ic_launcher_foreground)  // 活动模式图标
-            .setStaticIcon(R.drawable.ic_launcher_foreground)    // 环境模式(息屏)静态图标
+            .setStaticIcon(android.R.drawable.ic_dialog_info)  // 环境模式(息屏)静态图标
             .setTouchIntent(touchIntent)  // 必须非空
             .setStatus(Status.Builder()
                 .addTemplate(text)
                 .build())
             .build()
 
-        // apply 把 OngoingActivity 配置写回 builder,并发布通知
+        // apply 把 OngoingActivity 配置写回 builder
         ongoingActivity.apply(context)
+        // 兜底:显式 notify 一次,确保通知发出(某些 Wear OS 版本 apply 不发通知)
+        notificationManager.notify(NOTIFICATION_ID, builder.build())
     }
 
     /** 隐藏表盘指示器 */
@@ -86,7 +88,7 @@ class ProxyIndicator(private val context: Context) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "代理运行状态",
-                NotificationManager.IMPORTANCE_LOW  // 低重要性:不响铃,只在通知栏显示
+                NotificationManager.IMPORTANCE_DEFAULT  // 默认重要性,确保三星系统不静默丢弃
             ).apply {
                 description = "代理运行时显示表盘指示器"
                 setShowBadge(false)
