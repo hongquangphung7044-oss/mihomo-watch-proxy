@@ -22,6 +22,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val subStore = SubscriptionStore(app)
     private val api = MihomoApi()
 
+    /** 已保存的订阅列表(多订阅管理) */
+    var savedSubscriptions by mutableStateOf<List<SavedSubscription>>(emptyList())
+        private set
+
     init {
         // 注册 Shizuku binder 监听:Shizuku 启动/死亡时自动刷新状态
         shizuku.onStateChanged = { refreshShizuku() }
@@ -70,9 +74,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     /** 是否正在更新订阅 */
     var updating by mutableStateOf(false)
-        private set
-    /** 已保存的订阅列表(多订阅管理) */
-    var savedSubscriptions by mutableStateOf<List<SavedSubscription>>(emptyList())
         private set
 
     fun refreshShizuku() {
