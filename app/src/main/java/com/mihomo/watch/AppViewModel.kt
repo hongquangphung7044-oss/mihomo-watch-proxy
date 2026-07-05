@@ -27,6 +27,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("app_state", android.content.Context.MODE_PRIVATE)
     private val api = MihomoApi()
 
+    companion object {
+        private const val KEY_LAST_URL = "last_subscription_url"
+        private const val KEY_SORT_BY_DELAY = "sort_by_delay"
+        private const val KEY_AUTOSTART = "autostart_mihomo"
+    }
+
     /** 已保存的订阅列表(多订阅管理) */
     var savedSubscriptions by mutableStateOf<List<SavedSubscription>>(emptyList())
         private set
@@ -34,6 +40,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** 是否按延迟升序排序(true)还是原始顺序(false) */
     var sortByDelay by mutableStateOf(prefs.getBoolean(KEY_SORT_BY_DELAY, true))
         private set
+
+    /** 是否启用开机自启 mihomo(Shizuku 就绪 + 有保存的订阅时自动启动) */
+    var autoStart by mutableStateOf(prefs.getBoolean(KEY_AUTOSTART, false))
+        private set
+
+    /** 当前订阅链接(输入框内容,持久化最后用过的) */
+    var subscriptionUrl by mutableStateOf("")
 
     init {
         // 注册 Shizuku binder 监听:Shizuku 启动/死亡时自动刷新状态
@@ -44,19 +57,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // 恢复上次使用的订阅链接(删后台重启不用重输)
         subscriptionUrl = prefs.getString(KEY_LAST_URL, "") ?: ""
     }
-
-    companion object {
-        private const val KEY_LAST_URL = "last_subscription_url"
-        private const val KEY_SORT_BY_DELAY = "sort_by_delay"
-        private const val KEY_AUTOSTART = "autostart_mihomo"
-    }
-
-    /** 是否启用开机自启 mihomo(Shizuku 就绪 + 有保存的订阅时自动启动) */
-    var autoStart by mutableStateOf(prefs.getBoolean(KEY_AUTOSTART, false))
-        private set
-
-    /** 当前订阅链接(输入框内容,持久化最后用过的) */
-    var subscriptionUrl by mutableStateOf("")
 
     fun toggleAutoStart() {
         autoStart = !autoStart
