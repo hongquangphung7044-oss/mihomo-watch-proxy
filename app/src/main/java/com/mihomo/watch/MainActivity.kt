@@ -182,6 +182,13 @@ private fun MainScreen(vm: AppViewModel) {
                         colors = ChipDefaults.primaryChipColors()
                     )
                 }
+                item {
+                    Chip(
+                        onClick = { vm.testNotification() },
+                        label = { Text("测试通知") },
+                        colors = ChipDefaults.primaryChipColors()
+                    )
+                }
             }
             item { HintText("反射成功→直接点'启动'即可开代理") }
         }

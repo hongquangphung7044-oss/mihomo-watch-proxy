@@ -423,6 +423,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 测试通知能否显示(诊断指示器不显示问题) */
+    fun testNotification() {
+        indicator.test()
+        appendLog("已发测试通知,请下拉查看通知栏")
+    }
+
     fun loadGroups() {
         if (!isRunning) { error = "mihomo 未运行"; return }
         viewModelScope.launch(Dispatchers.IO) {

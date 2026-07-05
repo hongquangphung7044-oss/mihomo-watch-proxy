@@ -82,6 +82,23 @@ class ProxyIndicator(private val context: Context) {
         notificationManager.cancel(NOTIFICATION_ID)
     }
 
+    /**
+     * 测试通知能否显示(诊断用)。
+     *
+     * 发一个普通(非 ongoing)通知,如果通知栏能看到,说明通知系统工作正常,
+     * 问题在 OngoingActivity 配置;如果连这个都看不到,说明权限或系统设置有问题。
+     */
+    fun test() {
+        ensureChannel()
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("mihomo 测试通知")
+            .setContentText("如果你能看到这条,通知系统正常")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+        notificationManager.notify(NOTIFICATION_ID + 1, builder.build())
+    }
+
     private fun ensureChannel() {
         if (channelCreated) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
