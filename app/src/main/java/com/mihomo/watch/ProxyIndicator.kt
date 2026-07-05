@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.wear.ongoing.OngoingActivity
+import androidx.wear.ongoing.Status
 
 /**
  * 表盘"运行中"指示器封装。
@@ -65,7 +66,7 @@ class ProxyIndicator(private val context: Context) {
             .setAnimatedIcon(R.drawable.ic_launcher_foreground)  // 活动模式图标
             .setStaticIcon(R.drawable.ic_launcher_foreground)    // 环境模式(息屏)静态图标
             .setTouchIntent(touchIntent)  // 必须非空
-            .setStatus(OngoingActivity.Status.Builder()
+            .setStatus(Status.Builder()
                 .addTemplate(text)
                 .build())
             .build()
