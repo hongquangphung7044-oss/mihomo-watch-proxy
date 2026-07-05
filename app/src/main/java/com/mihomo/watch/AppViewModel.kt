@@ -32,7 +32,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val KEY_LAST_URL = "last_subscription_url"
         private const val KEY_SORT_BY_DELAY = "sort_by_delay"
-        private const val KEY_AUTOSTART = "autostart_mihomo"
     }
 
     /** 已保存的订阅列表(多订阅管理) */
@@ -41,10 +40,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 是否按延迟升序排序(true)还是原始顺序(false) */
     var sortByDelay by mutableStateOf(prefs.getBoolean(KEY_SORT_BY_DELAY, true))
-        private set
-
-    /** 是否启用开机自启 mihomo(Shizuku 就绪 + 有保存的订阅时自动启动) */
-    var autoStart by mutableStateOf(prefs.getBoolean(KEY_AUTOSTART, false))
         private set
 
     /** 当前订阅链接(输入框内容,持久化最后用过的) */
@@ -58,12 +53,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         savedSubscriptions = subStore.list()
         // 恢复上次使用的订阅链接(删后台重启不用重输)
         subscriptionUrl = prefs.getString(KEY_LAST_URL, "") ?: ""
-    }
-
-    fun toggleAutoStart() {
-        autoStart = !autoStart
-        prefs.edit().putBoolean(KEY_AUTOSTART, autoStart).apply()
-        appendLog("开机自启: ${if (autoStart) "开" else "关"}")
     }
 
     enum class ShizukuState { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, READY }
@@ -126,17 +115,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 MihomoForegroundService.start(getApplication())
                 appendLog("检测到 mihomo 在运行,已恢复通知")
             }
-            // 开机自启:Shizuku 就绪 + mihomo 没跑 + 有保存的订阅 + 用户开了自启
-            if (!isRunning && autoStart && subscriptionUrl.isNotBlank() && !autoStartAttempted) {
-                autoStartAttempted = true
-                appendLog("检测到自启条件满足,自动启动代理...")
-                startProxy()
-            }
         }
     }
-
-    /** 自启是否已尝试过(避免反复自启) */
-    private var autoStartAttempted = false
 
     /** 是否已尝试 bind(避免反复自动 bind) */
     private var bindAttempted = false
@@ -449,7 +429,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 groups = api.getSelectorGroups()
-                if (groups.isNotEmpty()) screen = Screen.Nodes
+                if (groups.isNotEmpty()) {
+                    screen = Screen.Nodes
+                    // 同步当前节点到通知文本
+                    groups.firstOrNull()?.now?.let {
+                        MihomoForegroundService.update(getApplication(), "当前: $it")
+                    }
+                }
             } catch (e: Exception) {
                 error = "加载节点失败: ${e.message} (mihomo 可能尚未就绪)"
             }
@@ -461,6 +447,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val ok = api.selectNode(group, node)
             if (ok) {
                 groups = api.getSelectorGroups()
+                // 同步当前节点到通知文本
+                MihomoForegroundService.update(getApplication(), "当前: $node")
             } else {
                 error = "切换节点失败"
             }
