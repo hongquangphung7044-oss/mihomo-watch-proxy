@@ -429,13 +429,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 groups = api.getSelectorGroups()
-                if (groups.isNotEmpty()) {
-                    screen = Screen.Nodes
-                    // 同步当前节点到通知文本
-                    groups.firstOrNull()?.now?.let {
-                        MihomoForegroundService.update(getApplication(), "当前: $it")
-                    }
-                }
+                if (groups.isNotEmpty()) screen = Screen.Nodes
             } catch (e: Exception) {
                 error = "加载节点失败: ${e.message} (mihomo 可能尚未就绪)"
             }
@@ -447,8 +441,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val ok = api.selectNode(group, node)
             if (ok) {
                 groups = api.getSelectorGroups()
-                // 同步当前节点到通知文本
-                MihomoForegroundService.update(getApplication(), "当前: $node")
             } else {
                 error = "切换节点失败"
             }
