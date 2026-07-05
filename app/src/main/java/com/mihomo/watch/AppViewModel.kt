@@ -221,10 +221,70 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateEditingName(s: String) { editingSubName = s }
 
-    /** 载入已保存的订阅到输入框(不自动启动,用户再点启动) */
+    /**
+     * 载入已保存的订阅。
+     * - 代理未运行:只更新输入框,用户再点启动
+     * - 代理运行中:自动用新订阅重启 mihomo(热重载可能不生效,直接重启最稳)
+     */
     fun loadSubscription(sub: SavedSubscription) {
         subscriptionUrl = sub.url
         appendLog("已载入订阅: ${sub.name}")
+        if (isRunning) {
+            appendLog("代理运行中,自动切换到新订阅...")
+            // 直接调 startProxy(会先 stop 旧的再 start 新的)
+            switchSubscription()
+        }
+    }
+
+    /**
+     * 切换订阅:不停止旧 mihomo,通过当前运行的代理下载新订阅,然后热重载。
+     *
+     * 关键:绝不能先停旧 mihomo!否则需要代理才能访问的订阅会下载失败
+     * (典型场景:用直连订阅 A 开代理,切换到需代理的订阅 B,B 下载不了)。
+     *
+     * 流程:
+     *   1. 通过当前 mihomo 代理(127.0.0.1:7890)下载新订阅
+     *   2. 写新 config.yaml 到磁盘
+     *   3. 调 mihomo API 热重载(PUT /configs?force=true),不停进程,不断流
+     *   4. 清空延迟/节点缓存,用户重新加载即可看到新节点
+     *
+     * 失败处理:下载或重载失败时旧 mihomo 仍运行,旧代理仍可用,不影响当前网络。
+     */
+    private fun switchSubscription() {
+        val runner = getRunner() ?: run {
+            error = "无可用执行通道,请手动点启动"
+            return
+        }
+        val url = subscriptionUrl.trim()
+        if (url.isEmpty()) { error = "订阅链接为空"; return }
+        loading = true
+        error = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // 通过当前运行的 mihomo 代理下载新订阅(关键:不先停旧代理!)
+                appendLog("通过当前代理下载新订阅: $url")
+                val raw = subscription.download(url, viaProxy = true)
+                appendLog("新订阅下载完成,${raw.length} 字节,热重载 mihomo...")
+                val config = subscription.injectControllerConfig(raw)
+                // 热重载:不停 mihomo 进程,原子替换配置
+                val ok = controller.updateConfigAndReload(runner, config)
+                if (ok) {
+                    appendLog("订阅切换成功,mihomo 已热重载")
+                    delays = emptyMap()
+                    groups = emptyList()  // 清空节点列表,用户重新点"选择节点"加载新订阅的节点
+                    isRunning = true
+                } else {
+                    error = "热重载失败,mihomo 可能需要手动停止后重启"
+                    appendLog(controller.tailLog(runner))
+                }
+            } catch (e: Exception) {
+                // 下载或重载失败:旧 mihomo 仍在运行,旧代理仍可用,不影响当前网络
+                error = "切换订阅失败: ${e.message}\n(旧订阅仍可用)"
+                appendLog("切换失败,旧代理保持运行: ${e.message}")
+            } finally {
+                loading = false
+            }
+        }
     }
 
     /** 删除已保存的订阅 */
