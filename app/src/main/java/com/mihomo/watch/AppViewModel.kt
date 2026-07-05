@@ -7,7 +7,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * App 状态与业务编排。
@@ -337,7 +341,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 测当前分组下所有节点延迟。
-     * 串行测(并发会被机场限速),结果实时更新到 [delays]。
+     * 限流并发(5 路),既比串行快很多,又不至于被机场限速。
+     * 结果实时更新到 [delays]。
      */
     fun testAllDelays() {
         if (!isRunning || groups.isEmpty()) { error = "无可用节点"; return }
@@ -346,17 +351,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         error = null
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 收集所有分组下的节点(去重)
                 val allNodes = groups.flatMap { it.all }.distinct()
-                appendLog("开始测 ${allNodes.size} 个节点延迟...")
+                appendLog("开始测 ${allNodes.size} 个节点延迟(5 并发)...")
                 val result = mutableMapOf<String, Int>()
-                for (node in allNodes) {
-                    val d = api.testDelay(node)
-                    result[node] = d
-                    // 实时刷新
-                    delays = result.toMap()
+                val done = AtomicInteger(0)
+                // 用 Semaphore 限流 5 并发
+                val sem = Semaphore(5)
+                val jobs = allNodes.map { node ->
+                    async {
+                        sem.acquire()
+                        try {
+                            val d = api.testDelay(node)
+                            synchronized(result) { result[node] = d }
+                            // 每测完一个刷新一次 UI
+                            delays = result.toMap()
+                            done.incrementAndGet()
+                        } finally {
+                            sem.release()
+                        }
+                    }
                 }
-                appendLog("延迟测试完成")
+                awaitAll(*jobs.toTypedArray())
+                appendLog("延迟测试完成 ${done.get()}/${allNodes.size}")
             } catch (e: Exception) {
                 error = "测延迟失败: ${e.message}"
             } finally {
