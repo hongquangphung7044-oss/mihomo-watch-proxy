@@ -136,14 +136,16 @@ class MihomoController(private val context: Context) {
         installConfig(runner, configContent)
         // 2.5 GeoIP/GeoSite 数据库(必须在启动 mihomo 前安装好,否则 mihomo 会尝试下载导致卡死)
         installGeodata(runner)
-        // 3. 先彻底停旧 mihomo(SIGKILL,避免端口 7890 占用导致新进程启动失败)
-        //    sleep 后再杀一次,确保僵尸进程清干净
-        runner("pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; true")
+        // 3. 先彻底停旧 mihomo(SIGKILL,避免端口 7890/9090 占用导致新进程启动失败)
+        //    关键修复:不能用 pkill -f mihomo,因为 shell 命令行也包含 "mihomo",
+        //    pkill 会先杀掉执行命令的 shell 自身 → 命令中断 → 旧 mihomo 杀不掉
+        //    改用 -x 精确匹配进程名(comm="mihomo"),shell 的 comm 是 "sh" 不会被匹配
+        killAllMihomo(runner)
         // 4. 启动 mihomo(nohup 脱离 runner 进程生命周期)
         runner("nohup $MIHOMO_BIN -d $MIHOMO_HOME > $MIHOMO_HOME/mihomo.log 2>&1 &")
         Thread.sleep(2000)  // 给 mihomo 启动时间(配置加载需要时间)
-        // 5. 验证启动:pgrep + 端口 9090 是否监听
-        val pgrep = runner("pgrep -f $MIHOMO_BIN 2>/dev/null || echo NONE")
+        // 5. 验证启动:pgrep -x 精确匹配进程名(避免误匹配 shell)
+        val pgrep = runner("pgrep -x mihomo 2>/dev/null || echo NONE")
         if (pgrep.contains("NONE") || pgrep.isBlank()) {
             val log = runner("tail -30 $MIHOMO_HOME/mihomo.log 2>&1")
             throw RuntimeException("mihomo 启动失败,日志:\n$log")
@@ -195,18 +197,52 @@ class MihomoController(private val context: Context) {
                 "或确认 Shizuku 服务正在运行后重试。"
             )
         }
-        // 3. SIGKILL 立即杀 mihomo,避免 SIGTERM 退出延迟导致 isRunning 误判还在跑
-        try { runner("pkill -9 -f mihomo 2>/dev/null; sleep 0.3; pkill -9 -f mihomo 2>/dev/null; true") } catch (_: Exception) {}
-        // 4. 验证 mihomo 确实杀了(没杀掉会导致下次启动端口冲突)
-        val pgrep = try { runner("pgrep -f mihomo 2>/dev/null || echo NONE") } catch (_: Exception) { "NONE" }
+        // 3. 杀 mihomo 进程(killAllMihomo 内部用 -x 精确匹配,避免 pkill 自杀 shell)
+        killAllMihomo(runner)
+        // 4. 验证 mihomo 确实杀了(用 -x 精确匹配,避免误匹配 shell)
+        val pgrep = try { runner("pgrep -x mihomo 2>/dev/null || echo NONE") } catch (_: Exception) { "NONE" }
         if (!pgrep.contains("NONE") && pgrep.isNotBlank()) {
-            throw RuntimeException("mihomo 进程未完全停止(可能需要重试)。残留 PID: ${pgrep.trim()}")
+            // 杀不掉!输出详细诊断(可能是 D 状态不可中断睡眠)
+            val ps = try { runner("ps -ef 2>/dev/null | grep '[m]ihomo' || echo NO_PS") } catch (_: Exception) { "NO_PS" }
+            throw RuntimeException(
+                "mihomo 进程未完全停止(SIGKILL 杀不掉,可能处于 D 状态不可中断睡眠)。\n" +
+                "残留 PID: ${pgrep.trim()}\n进程信息: $ps\n" +
+                "请用 ADB 强杀: adb shell kill -9 ${pgrep.trim()}\n" +
+                "或重启手表后重试。"
+            )
         }
     }
 
-    /** mihomo 是否在运行 */
+    /**
+     * 彻底杀掉所有 mihomo 进程(用 SIGKILL,精确匹配避免杀掉 shell 自身)。
+     *
+     * 关键修复:旧版用 pkill -9 -f mihomo,但 -f 匹配整个命令行,
+     * 执行命令的 shell(sh -c "pkill -9 -f mihomo...")命令行也包含 "mihomo",
+     * pkill 会先杀掉 shell 自身 → 命令中断 → 旧 mihomo 杀不掉。
+     *
+     * 现在用三重保险:
+     * 1. pkill -x mihomo(-x 精确匹配进程名 comm="mihomo",shell 的 comm 是 "sh")
+     * 2. ps + grep 精确匹配二进制路径(兜底,-x 在某些系统可能不支持)
+     * 3. 再 pkill -x 一次(确保僵尸进程清干净)
+     */
+    private fun killAllMihomo(runner: CommandRunner) {
+        try {
+            // 方法1:pkill -x 精确匹配进程名(shell comm 是 "sh",不会被匹配)
+            runner("pkill -9 -x mihomo 2>/dev/null; true")
+            Thread.sleep(500)
+            // 方法2:ps + grep 精确匹配二进制路径(兜底,处理 -x 不支持或 comm 被截断的情况)
+            // grep '[m]ihomo' 技巧:正则中括号防止 grep 匹配到自身
+            runner("ps -ef 2>/dev/null | grep '[m]ihomo' | grep -v grep | awk '{print \$2}' | xargs -r kill -9 2>/dev/null; true")
+            Thread.sleep(500)
+            // 方法3:再 pkill -x 一次,清残留
+            runner("pkill -9 -x mihomo 2>/dev/null; true")
+            Thread.sleep(300)
+        } catch (_: Exception) {}
+    }
+
+    /** mihomo 是否在运行(用 -x 精确匹配进程名,避免误匹配 shell) */
     fun isRunning(runner: CommandRunner): Boolean = try {
-        val r = runner("pgrep -f mihomo 2>/dev/null || echo NONE")
+        val r = runner("pgrep -x mihomo 2>/dev/null || echo NONE")
         !r.contains("NONE") && r.isNotBlank()
     } catch (e: Exception) {
         false
