@@ -69,17 +69,16 @@
 
 - ✅ 多订阅管理：保存/载入/删除多个机场订阅
 - ✅ 节点延迟测试（5 并发优化）+ 按延迟排序
-- ✅ 持久化：订阅链接、排序偏好、开机自启
+- ✅ 持久化：订阅链接、排序偏好
 - ✅ 订阅热重载：切换订阅不停 mihomo 进程，不断流
 - ✅ 通过当前代理下载新订阅（支持"用直连订阅 A 开代理，再切换到需代理的订阅 B"场景）
-- ✅ 开机自启 mihomo
 - ✅ 保存订阅时自定义名字
 - ✅ 启动后 API 就绪轮询（解决启动后立即选节点失败）
 - ✅ 诊断面板：Shizuku 状态、反射测试、bind 失败原因
 - ✅ 支持所有 mihomo 协议（hy2/vless/vmess/trojan/ss/tuic/wireguard 等）
 - ✅ **GeoIP/GeoSite 数据库内置**（解决国行手表直连 github 下载 mmdb 卡死问题）
 - ✅ **独立 SOCKS5 端口 7891**（供 TgWrist 等需要纯 SOCKS 代理的 App 使用）
-- ✅ **Jetpack Compose + Wear Material 3** UI
+- ✅ **Jetpack Compose + Wear Compose Material 2** UI（琥珀色主色 + 绿色运行状态）
 - ✅ **前台服务 + OngoingActivity**（表盘底部圆圈"运行中"指示器）
 - ✅ **GitHub Actions Release 签名构建**（keystore 入仓库保证可覆盖安装）
 
@@ -202,11 +201,7 @@ curl -L -o app/src/main/assets/geosite.dat \
 
 - **保存**：粘贴订阅链接 → 点 **保存** → 输入名字
 - **载入**：点已保存的订阅项 → 自动切换（热重载，不断流）
-- **删除**：长按已保存的订阅项
-
-### 开机自启
-
-主界面打开 **开机自启** 开关。下次开机（Shizuku 就绪 + 有保存的订阅 URL）自动启动代理。
+- **删除**：点订阅项右侧的 ×
 
 ### TgWrist (Telegram) 配代理
 
@@ -459,7 +454,7 @@ mihomo 启动后 API 需要几秒才能响应。当前实现已加 10 秒轮询�
 
 ### 重启手表后代理失效
 
-打开 **开机自启** 开关。注意 Shizuku 也需要重启（手表重启后 Shizuku 服务会断，需重新用 ADB 启动）。
+手表重启后 mihomo 进程和 Shizuku 服务都会断。需要重新用 ADB 启动 Shizuku，然后打开 App 点 **启动**。（本项目未实现开机自启，因为 Shizuku 服务本身就需要 ADB 启动，开机自启意义不大）
 
 ### 无法覆盖安装：软件包与现有软件包存在冲突
 
