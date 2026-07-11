@@ -62,6 +62,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // 场景:手表重启后 Shizuku/mihomo 都不自启,但 http_proxy 是持久化的,
         // 残留 127.0.0.1:7890 会导致整机网络瘫痪。这里提前警告用户。
         checkResidualProxyOnStartup()
+        // 检测 WRITE_SECURE_SETTINGS 权限状态(供 UI 显示授权提示)
+        refreshSecureSettingsFlag()
+    }
+
+    /** 异步检测 WRITE_SECURE_SETTINGS 权限,更新 hasSecureSettings 状态 */
+    private fun refreshSecureSettingsFlag() {
+        viewModelScope.launch(Dispatchers.IO) {
+            hasSecureSettings = hasSecureSettingsPermission()
+        }
     }
 
     /**
@@ -109,6 +118,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * http_proxy 也可能残留,App 没 shell 权限无法检测也无法清理。
      */
     var proxyStateUnknown by mutableStateOf(false)
+        private set
+    /**
+     * 是否已授权 WRITE_SECURE_SETTINGS(供 UI 决定是否显示授权提示)。
+     * 启动时异步检测一次,refreshShizuku 时更新。
+     */
+    var hasSecureSettings by mutableStateOf(false)
         private set
     var log by mutableStateOf("")
         private set
