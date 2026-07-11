@@ -72,6 +72,12 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
+    // 关键: 二进制 assets 不能被 AAPT 压缩,否则 AssetManager.open() 读出来的是压缩流,
+    // cp 到 /data/local/tmp 后文件损坏(mihomo 二进制无法执行,mmdb 数据库无效)
+    androidResources {
+        noCompress += listOf("mihomo", "metadb", "dat", "mmdb")
+    }
+
     // lint 检查放宽:手表项目部分规则不适用
     lint {
         abortOnError = false

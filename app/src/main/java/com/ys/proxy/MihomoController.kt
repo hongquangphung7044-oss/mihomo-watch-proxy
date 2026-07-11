@@ -85,6 +85,46 @@ class MihomoController(private val context: Context) {
     }
 
     /**
+     * 安装 GeoIP/GeoSite 数据库到 mihomo_home。
+     *
+     * 关键修复:解决 "MMDB invalid, remove and download" 导致 mihomo 卡死问题。
+     *
+     * 问题根因:
+     *  mihomo 启动时需要 GeoIP 数据库(geoip.metadb)来解析 GEOIP 规则(如 GEOIP,CN,DIRECT)。
+     *  如果文件缺失或损坏,mihomo 会尝试从 github 下载,但:
+     *    - 手表在国内,github 直连不通(需要代理,但代理还没起来 → 鸡生蛋问题)
+     *    - 下载卡住 → 9090 端口迟迟不起 → App 显示"无法连接"
+     *
+     * 解决方案:
+     *  1. 把 geoip.metadb + geosite.dat 打包到 assets(随 APK 分发)
+     *  2. 每次启动 mihomo 前都重新安装一份(覆盖可能损坏的旧文件)
+     *  3. 配置 geo-auto-update: false 禁止自动更新(避免更新时损坏)
+     */
+    fun installGeodata(runner: CommandRunner) {
+        // 1. 释放 assets 里的 geo 数据到 App 外部目录
+        val extGeoip = File(extDir, "geoip.metadb")
+        val extGeosite = File(extDir, "geosite.dat")
+        if (!extGeoip.exists() || extGeoip.length() < 1_000_000) {
+            context.assets.open("geoip.metadb").use { input ->
+                extGeoip.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+        if (!extGeosite.exists() || extGeosite.length() < 1_000_000) {
+            context.assets.open("geosite.dat").use { input ->
+                extGeosite.outputStream().use { output -> input.copyTo(output) }
+            }
+        }
+        // 2. 先删除 mihomo_home 里可能损坏的旧 geo 文件(包括各种历史命名)
+        //    mihomo 检测到文件存在但无效时会 "remove and download",我们提前删干净
+        runner("rm -f $MIHOMO_HOME/geoip.metadb $MIHOMO_HOME/country.mmdb $MIHOMO_HOME/geoip.dat $MIHOMO_HOME/geosite.dat $MIHOMO_HOME/GeoIP.dat $MIHOMO_HOME/GeoSite.dat 2>/dev/null; true")
+        // 3. 复制新鲜的 geo 数据到 mihomo_home
+        val r = runner("cp '${extGeoip.absolutePath}' '$MIHOMO_HOME/geoip.metadb' && cp '${extGeosite.absolutePath}' '$MIHOMO_HOME/geosite.dat' && ls -la $MIHOMO_HOME/geoip.metadb $MIHOMO_HOME/geosite.dat 2>&1")
+        if (!r.contains("geoip.metadb") || !r.contains("geosite.dat")) {
+            throw RuntimeException("GeoIP 数据库安装失败: $r")
+        }
+    }
+
+    /**
      * 启动完整代理链:安装二进制 + 安装配置 + 启动 mihomo + 设全局代理。
      * @param runner 命令执行器(UserService 或 newProcess)
      * @param configContent 订阅下载并注入控制面板配置后的完整 yaml
@@ -94,6 +134,8 @@ class MihomoController(private val context: Context) {
         installBinary(runner)
         // 2. 配置
         installConfig(runner, configContent)
+        // 2.5 GeoIP/GeoSite 数据库(必须在启动 mihomo 前安装好,否则 mihomo 会尝试下载导致卡死)
+        installGeodata(runner)
         // 3. 先彻底停旧 mihomo(SIGKILL,避免端口 7890 占用导致新进程启动失败)
         //    sleep 后再杀一次,确保僵尸进程清干净
         runner("pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; true")

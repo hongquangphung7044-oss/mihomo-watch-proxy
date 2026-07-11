@@ -69,7 +69,8 @@ class SubscriptionManager {
     fun injectControllerConfig(rawConfig: String, secret: String = "watch123"): String {
         val overrideKeys = setOf(
             "mixed-port", "socks-port", "port", "external-controller", "secret",
-            "allow-lan", "mode", "log-level", "external-ui"
+            "allow-lan", "mode", "log-level", "external-ui",
+            "geodata-mode", "geo-auto-update", "geodata-loader", "geox-url", "geox-sync-path"
         )
 
         // 过滤掉用户 config 里的覆盖项,避免重复 key
@@ -94,6 +95,11 @@ class SubscriptionManager {
             appendLine("log-level: info")
             appendLine("external-controller: 127.0.0.1:9090")
             appendLine("secret: '$secret'")
+            appendLine("# GeoIP 数据库配置:已随 APK 打包,禁止自动下载/更新")
+            appendLine("# (否则 mihomo 会尝试从 github 下载,国内直连不通会卡死,9090 端口起不来)")
+            appendLine("geodata-mode: false")
+            appendLine("geo-auto-update: false")
+            appendLine("geodata-loader: standard")
             appendLine("# === 用户订阅内容 ===")
         }
 
