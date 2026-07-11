@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mihomo.watch"
+    namespace = "com.ys.proxy"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.mihomo.watch"
+        applicationId = "com.ys.proxy"
         // Galaxy Watch7 国行 Wear OS 5 = API 34。早期 Wear OS 3 = API 30
         minSdk = 30
         targetSdk = 34

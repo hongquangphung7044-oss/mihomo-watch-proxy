@@ -1,7 +1,7 @@
 // Shizuku UserService 接口
 // 这个接口的方法运行在 Shizuku 进程中,拥有 shell (uid 2000) 权限
 // 用于绕过三星对 VpnService 的限制:不用 VPN,改用 shell 执行 settings + mihomo
-package com.mihomo.watch;
+package com.ys.proxy;
 
 interface IWatchService {
     // 同步执行 shell 命令,返回合并的 stdout+stderr

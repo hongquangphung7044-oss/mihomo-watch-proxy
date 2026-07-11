@@ -1,4 +1,4 @@
-package com.mihomo.watch
+package com.ys.proxy
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

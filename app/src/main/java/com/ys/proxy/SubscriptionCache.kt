@@ -1,4 +1,4 @@
-package com.mihomo.watch
+package com.ys.proxy
 
 import android.content.Context
 import java.io.File

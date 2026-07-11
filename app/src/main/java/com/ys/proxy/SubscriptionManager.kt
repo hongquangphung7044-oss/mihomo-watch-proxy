@@ -1,4 +1,4 @@
-package com.mihomo.watch
+package com.ys.proxy
 
 import okhttp3.OkHttpClient
 import okhttp3.Request

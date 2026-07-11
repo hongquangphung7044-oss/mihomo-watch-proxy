@@ -1,4 +1,4 @@
-package com.mihomo.watch
+package com.ys.proxy
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -100,20 +100,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             !shizuku.hasPermission() -> ShizukuState.NO_PERMISSION
             else -> ShizukuState.READY
         }
-        // 已授权但 service 未绑定时自动 bind(非阻塞,失败不影响备用模式)
-        if (shizukuState == ShizukuState.READY && service == null && !bindAttempted) {
-            bindAttempted = true
-            connectShizuku()
-        }
-        // 有可用 runner 时刷新 mihomo 运行状态
-        val runner = getRunner()
-        if (runner != null) {
-            val wasRunning = isRunning
-            isRunning = controller.isRunning(runner)
-            // mihomo 在跑但前台服务没启动(App 重启场景):补启动前台服务显示通知
-            if (isRunning && !wasRunning) {
-                MihomoForegroundService.start(getApplication())
-                appendLog("检测到 mihomo 在运行,已恢复通知")
+        // 检测 mihomo 是否在跑 + 补启动前台服务通知。
+        // 必须异步:pgrep 走反射通道(Shizuku.newProcess)会起 shell 进程并 waitFor,
+        // 同步执行会阻塞主线程导致 App 卡顿(开 App 后一分钟内非常卡)。
+        if (shizukuState == ShizukuState.READY) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val runner = getRunner() ?: return@launch
+                val wasRunning = isRunning
+                val running = controller.isRunning(runner)
+                if (running != wasRunning) {
+                    isRunning = running
+                    // mihomo 在跑但前台服务没启动(App 重启场景):补启动前台服务显示通知
+                    if (running) {
+                        MihomoForegroundService.start(getApplication())
+                        appendLog("检测到 mihomo 在运行,已恢复通知")
+                    }
+                }
             }
         }
     }

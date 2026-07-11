@@ -1,4 +1,4 @@
-package com.mihomo.watch
+package com.ys.proxy
 
 import android.Manifest
 import android.content.ClipboardManager
@@ -24,8 +24,26 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
+import androidx.wear.compose.material.Colors
 
 class MainActivity : ComponentActivity() {
+
+    // 自定义配色:琥珀色主色(与图标 M 一致)+ 绿色辅色(运行状态)
+    private val ProxyColors = Colors(
+        primary = Color(0xFFFFC107),
+        primaryVariant = Color(0xFFFFB300),
+        secondary = Color(0xFF43A047),
+        secondaryVariant = Color(0xFF2E7D32),
+        background = Color.Black,
+        surface = Color(0xFF1E1E1E),
+        error = Color(0xFFEF5350),
+        onPrimary = Color.Black,
+        onSecondary = Color.Black,
+        onBackground = Color.White,
+        onSurface = Color.White,
+        onSurfaceVariant = Color(0xFFCCCCCC),
+        onError = Color.Black
+    )
 
     // 通知权限申请(Android 13+ 必需,用于表盘"运行中"指示器)
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -36,7 +54,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermission()
         setContent {
-            MaterialTheme {
+            MaterialTheme(colors = ProxyColors) {
                 // 不用 viewModel()(inline 函数在某些版本组合下内联失败),
                 // 直接 remember 构造 AppViewModel,Wear OS 单屏够用
                 val vm = remember { AppViewModel(application) }
