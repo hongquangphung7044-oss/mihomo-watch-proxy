@@ -15,6 +15,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -137,9 +140,15 @@ private fun SaveSubscriptionDialog(vm: AppViewModel) {
 private fun MainScreen(vm: AppViewModel) {
     val listState = rememberScalingLazyListState()
     val ctx = LocalContext.current  // 在 composable 作用域取,onClick 里用
+    // touch bezel(屏幕边缘滑动模拟旋转表圈)需要列表获得焦点才能响应 rotary 事件
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(focusRequester)
+            .focusable(),
         horizontalAlignment = Alignment.CenterHorizontally,
         contentPadding = PaddingValues(vertical = 20.dp)
     ) {
@@ -368,9 +377,14 @@ private fun MainScreen(vm: AppViewModel) {
 @Composable
 private fun NodesScreen(vm: AppViewModel) {
     val listState = rememberScalingLazyListState()
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(focusRequester)
+            .focusable(),
         horizontalAlignment = Alignment.CenterHorizontally,
         contentPadding = PaddingValues(vertical = 20.dp)
     ) {
