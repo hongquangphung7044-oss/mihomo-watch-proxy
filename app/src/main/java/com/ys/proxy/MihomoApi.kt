@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 /**
@@ -16,10 +17,14 @@ import java.util.concurrent.TimeUnit
  *  - 测延迟
  *
  * 所有请求需要带 Authorization: Bearer <secret>。
+ *
+ * 关键:client 必须 proxy(NO_PROXY),否则当系统残留 http_proxy=127.0.0.1:7890
+ * 但 mihomo 未运行时,访问 127.0.0.1:9090 也会被转发到 7890 → 连接失败。
  */
 class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private val secret: String = "watch123") {
 
     private val client = OkHttpClient.Builder()
+        .proxy(Proxy.NO_PROXY)
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .build()

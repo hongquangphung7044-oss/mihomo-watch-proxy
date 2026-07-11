@@ -23,10 +23,21 @@ android {
         }
     }
 
+    // 显式定义签名配置,确保 release 和 debug 用同一个 keystore(可覆盖安装)
+    // storeFile 指向 ~/.android/debug.keystore(CI 缓存这个文件保证签名一致)
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // 用 debug 签名方便直接装,用户自己装正式签名可改
+            // release 也用 debug 签名,方便用户直接覆盖安装
             signingConfig = signingConfigs.getByName("debug")
         }
     }

@@ -18,8 +18,12 @@ import java.util.concurrent.TimeUnit
  */
 class SubscriptionManager {
 
-    /** 直连 client(首次启动用) */
+    /** 直连 client(首次启动用)。
+     *  关键:必须显式 proxy(NO_PROXY),否则 OkHttp 会走系统代理(http_proxy)。
+     *  如果旧 mihomo 残留了 http_proxy=127.0.0.1:7890 但进程已死,
+     *  直连下载会连不上 → "无法连接"。 */
     private val directClient: OkHttpClient = OkHttpClient.Builder()
+        .proxy(Proxy.NO_PROXY)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()

@@ -108,7 +108,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (shizukuState == ShizukuState.READY) {
             viewModelScope.launch(Dispatchers.IO) {
                 val runner = getRunner() ?: return@launch
-                isRunning = controller.isRunning(runner)
+                val running = controller.isRunning(runner)
+                isRunning = running
+                // 清理残留:http_proxy 设置了但 mihomo 没在跑(旧 App 卸载/崩溃残留),
+                // 必须清理,否则 OkHttp 直连下载订阅会走死代理 → "无法连接"
+                if (!running) {
+                    val proxy = try { runner("settings get global http_proxy") } catch (_: Exception) { "" }
+                    if (proxy.isNotBlank() && proxy.contains(":") && !proxy.contains(":0")) {
+                        try {
+                            runner("settings delete global http_proxy")
+                            runner("settings put global http_proxy :0")
+                            appendLog("清理了残留的全局代理(旧 mihomo 未运行)")
+                        } catch (_: Exception) {}
+                    }
+                }
             }
         }
     }
