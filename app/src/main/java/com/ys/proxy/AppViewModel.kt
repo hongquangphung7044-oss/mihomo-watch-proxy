@@ -96,6 +96,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val isBound: Boolean get() = service != null
     var isRunning by mutableStateOf(false)
         private set
+    /**
+     * 代理状态是否"未知"(Shizuku 不可用时无法检测 mihomo 是否在跑)。
+     * true 时 UI 应显示警告,不能让用户误以为能正常停止。
+     * 场景:Shizuku 被省电杀掉,但 mihomo 进程(shell 启动)可能还在跑,
+     * http_proxy 也可能残留,App 没 shell 权限无法检测也无法清理。
+     */
+    var proxyStateUnknown by mutableStateOf(false)
+        private set
     var log by mutableStateOf("")
         private set
     var groups by mutableStateOf<List<MihomoApi.Proxy>>(emptyList())
@@ -141,6 +149,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val runner = getRunner() ?: return@launch
                 val running = controller.isRunning(runner)
                 isRunning = running
+                proxyStateUnknown = false  // Shizuku 可用,状态明确
                 // 清理残留:http_proxy 设置了但 mihomo 没在跑(旧 App 卸载/崩溃残留),
                 // 必须清理,否则 OkHttp 直连下载订阅会走死代理 → "无法连接"
                 if (!running) {
@@ -154,6 +163,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             error = null
                         } catch (_: Exception) {}
                     }
+                }
+            }
+        } else {
+            // Shizuku 不可用(NOT_RUNNING/NO_PERMISSION/NOT_INSTALLED)
+            // 关键修复(Bug 1):旧版不更新 isRunning,UI 仍显示"停止"按钮误导用户。
+            // 现在标记代理状态未知,UI 显示警告。
+            // 注意:不能直接把 isRunning 设为 false,因为 mihomo 可能还在跑(shell 进程独立于 Shizuku)。
+            proxyStateUnknown = true
+            // 如果有 WRITE_SECURE_SETTINGS 权限,检测残留 http_proxy 并尝试清理
+            val residual = getResidualHttpProxy()
+            if (residual != null) {
+                if (hasSecureSettingsPermission()) {
+                    // 有权限,直接清(不依赖 Shizuku)
+                    viewModelScope.launch(Dispatchers.IO) {
+                        if (clearProxyViaSecureSettings()) {
+                            appendLog("Shizuku 不可用,用 WRITE_SECURE_SETTINGS 清除了残留代理: $residual")
+                            error = null
+                            proxyStateUnknown = false
+                            isRunning = false  // 代理清了,mihomo 是否在跑不重要
+                        } else {
+                            // 清不动,警告用户
+                            error = "Shizuku 不可用,检测到残留代理: $residual\n" +
+                                "已授权 WRITE_SECURE_SETTINGS 但清除失败,请用 ADB:\n" +
+                                "adb shell settings delete global http_proxy"
+                        }
+                    }
+                } else {
+                    // 无权限,警告用户
+                    error = "⚠️ Shizuku 已断开,代理状态未知!\n" +
+                        "检测到残留全局代理: $residual\n" +
+                        "点'停止'可能无法清除代理。自救方法:\n" +
+                        "1. 启动 Shizuku 后重新操作\n" +
+                        "2. ADB: adb shell settings delete global http_proxy\n" +
+                        "3. 永久免疫: adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS"
                 }
             }
         }

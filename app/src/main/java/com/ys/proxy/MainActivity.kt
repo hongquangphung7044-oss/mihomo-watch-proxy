@@ -294,11 +294,21 @@ private fun MainScreen(vm: AppViewModel) {
             // 启动/停止按钮
             item {
                 if (vm.isRunning) {
-                    Button(
-                        onClick = { vm.stopProxy() },
-                        colors = ButtonDefaults.secondaryButtonColors()
-                    ) {
-                        Text("停止", fontSize = 14.sp)
+                    // proxyStateUnknown: Shizuku 不可用,代理状态未知,警告用户
+                    if (vm.proxyStateUnknown) {
+                        Button(
+                            onClick = { vm.stopProxy() },
+                            colors = ButtonDefaults.secondaryButtonColors()
+                        ) {
+                            Text("停止⚠️", fontSize = 13.sp, color = Color(0xFFE53935))
+                        }
+                    } else {
+                        Button(
+                            onClick = { vm.stopProxy() },
+                            colors = ButtonDefaults.secondaryButtonColors()
+                        ) {
+                            Text("停止", fontSize = 14.sp)
+                        }
                     }
                 } else {
                     Button(
