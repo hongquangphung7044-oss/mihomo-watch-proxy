@@ -61,16 +61,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * App 启动时检测残留全局代理(不依赖 Shizuku,普通 App 可读 Settings.Global)。
-     * 如果检测到残留代理且 mihomo 没在跑,设置 error 警告用户整机网络可能瘫痪。
+     * 如果检测到残留代理:
+     *   - 有 WRITE_SECURE_SETTINGS 权限 → 直接自动清除(不依赖 Shizuku)
+     *   - 无权限 → 警告用户,给 ADB 自救命令
      */
     private fun checkResidualProxyOnStartup() {
         val residual = getResidualHttpProxy() ?: return
-        // 有残留代理,警告用户(此时还不知道 mihomo 是否在跑,先警告)
-        // refreshShizuku 会在 Shizuku 就绪后自动清理
+        // 有残留代理
+        if (hasSecureSettingsPermission()) {
+            // 有权限,直接清!
+            val cleared = clearProxyViaSecureSettings()
+            if (cleared) {
+                appendLog("启动时检测到残留代理 $residual,已用 WRITE_SECURE_SETTINGS 自动清除")
+                // 不设 error,静默清除即可
+                return
+            }
+        }
+        // 无权限或清除失败,警告用户
         error = "检测到残留全局代理: $residual\n" +
             "如果网络无法使用,可能是代理残留导致。\n" +
             "若 Shizuku 已就绪,App 会自动清理;否则请用 ADB:\n" +
-            "adb shell settings delete global http_proxy"
+            "adb shell settings delete global http_proxy\n" +
+            "永久免疫: adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS"
         appendLog("警告:检测到残留全局代理 $residual")
     }
 
@@ -432,9 +444,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stopProxy() {
         val runner = getRunner()
         if (runner == null) {
-            // 关键修复:runner 不可用时不能静默放弃!
-            // 旧版直接 return,导致 http_proxy 残留 → 整机网络瘫痪 → 重启也无法自愈。
-            // 现在检测残留代理并给用户明确的自救指引。
+            // runner 不可用(Shizuku 被杀/未启动)
+            // 优先用 WRITE_SECURE_SETTINGS 权限清 http_proxy(避免整机网络瘫痪)
+            if (hasSecureSettingsPermission()) {
+                val cleared = clearProxyViaSecureSettings()
+                if (cleared) {
+                    appendLog("Shizuku 不可用,已用 WRITE_SECURE_SETTINGS 权限清除 http_proxy")
+                    // mihomo 进程杀不掉(没 shell 权限),但 http_proxy 清了网络就恢复
+                    // 下次启动 mihomo 时 pkill -9 会顺带清掉旧进程
+                    MihomoForegroundService.stop(getApplication())
+                    isRunning = false
+                    groups = emptyList()
+                    error = "代理已清除(http_proxy 已移除)。\n" +
+                        "注意:mihomo 进程可能仍在后台(shell 权限才能杀),但不影响网络。\n" +
+                        "Shizuku 恢复后可正常重启代理。"
+                    return
+                }
+            }
+            // 无 WRITE_SECURE_SETTINGS 权限,给用户自救指引
             val residualProxy = getResidualHttpProxy()
             error = if (residualProxy != null) {
                 "Shizuku 通道不可用,无法停止代理!\n" +
@@ -442,7 +469,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 "这会导致整机网络瘫痪(WiFi/蓝牙网络共享全失效)。\n\n" +
                 "自救方法(任选其一):\n" +
                 "1. 启动 Shizuku 服务后重新点'停止'\n" +
-                "2. ADB 执行: adb shell settings delete global http_proxy"
+                "2. ADB 执行: adb shell settings delete global http_proxy\n" +
+                "3. 一次性授权后永久免疫: adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS"
             } else {
                 "Shizuku 通道不可用,无法停止代理。\n" +
                 "请先启动 Shizuku 服务(打开 Shizuku App 按提示操作),再点'停止'。"
@@ -464,6 +492,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // controller.stop 验证失败会抛异常,这里显示给用户
                 // 即使停止失败,也更新一下状态(可能 mihomo 杀了但代理没清,或反之)
                 isRunning = controller.isRunning(runner)
+                // 如果 Shizuku 通道清代理失败,尝试用 WRITE_SECURE_SETTINGS 兜底
+                if (!isRunning && hasSecureSettingsPermission()) {
+                    if (clearProxyViaSecureSettings()) {
+                        appendLog("Shizuku 通道清代理失败,已用 WRITE_SECURE_SETTINGS 兜底清除")
+                        error = null
+                        groups = emptyList()
+                        return@launch
+                    }
+                }
                 error = e.message ?: "停止失败"
                 appendLog("停止异常: ${e.message}")
             }
@@ -488,6 +525,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (proxy.isNullOrBlank() || proxy == ":0") null else proxy
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /**
+     * 检查 App 是否被授予 WRITE_SECURE_SETTINGS 权限。
+     * 需通过 ADB 一次性授权:adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
+     * 授权后持久有效(重启不丢失),App 可直接清 http_proxy 不依赖 Shizuku。
+     */
+    private fun hasSecureSettingsPermission(): Boolean {
+        return try {
+            getApplication<Application>().checkSelfPermission(
+                android.Manifest.permission.WRITE_SECURE_SETTINGS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 用 App 自己的 WRITE_SECURE_SETTINGS 权限清全局 http_proxy(不依赖 Shizuku)。
+     *
+     * 适用场景:
+     *   - Shizuku 被系统省电杀掉,http_proxy 残留导致整机网络瘫痪
+     *   - 手表重启后 Shizuku 不自启,但 http_proxy 持久化残留
+     *   - stopProxy() 时 Shizuku runner 不可用
+     *
+     * @return true 清除成功,false 无权限或清除失败
+     */
+    private fun clearProxyViaSecureSettings(): Boolean {
+        if (!hasSecureSettingsPermission()) return false
+        return try {
+            // Settings.Global.putString 清 http_proxy
+            val ok1 = android.provider.Settings.Global.putString(
+                getApplication<Application>().contentResolver,
+                android.provider.Settings.Global.HTTP_PROXY,
+                ":0"
+            )
+            // 验证清掉了
+            val after = android.provider.Settings.Global.getString(
+                getApplication<Application>().contentResolver,
+                android.provider.Settings.Global.HTTP_PROXY
+            )
+            after.isNullOrBlank() || after == ":0"
+        } catch (_: SecurityException) {
+            false  // 权限被收回
+        } catch (_: Exception) {
+            false
         }
     }
 

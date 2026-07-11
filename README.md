@@ -189,6 +189,26 @@ curl -L -o app/src/main/assets/geosite.dat \
    - 启动 Shizuku：`adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh`
 3. **给本 App 授权**：打开 Shizuku App → 授权 mihomo-watch-proxy
 
+### ⚠️ 强烈建议：一次性授权 WRITE_SECURE_SETTINGS（防止网络瘫痪）
+
+**背景**：`http_proxy` 是持久化写入（存在系统设置数据库），手表重启不清除。如果 Shizuku 服务被系统省电杀掉，`http_proxy=127.0.0.1:7890` 残留但 mihomo 进程没在跑 → **整机网络瘫痪**（WiFi/蓝牙网络共享全失效，重启也无法自愈）。
+
+**解决方案**：通过 ADB 一次性授予 WRITE_SECURE_SETTINGS 权限，授权后**永久有效**（重启不丢失，除非卸载 App）。App 就能在 Shizuku 不可用时自己清除 http_proxy，不再依赖 Shizuku：
+
+```bash
+adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
+```
+
+授权后的防护效果：
+
+| 场景 | 未授权 | 已授权 |
+|------|--------|--------|
+| Shizuku 被省电杀掉 | ❌ 网络瘫痪 | ✅ App 启动时自动清 http_proxy |
+| 手表重启后打开 App | ❌ 网络瘫痪 | ✅ 自动检测并清除残留代理 |
+| 点停止时 Shizuku 没运行 | ❌ 无法清代理 | ✅ 用 App 自己权限清代理 |
+
+> 此权限只允许 App 修改系统设置中的 http_proxy，不会带来安全风险。权限声明在 [AndroidManifest.xml](app/src/main/AndroidManifest.xml)，实际使用逻辑在 [AppViewModel.kt](app/src/main/java/com/ys/proxy/AppViewModel.kt) 的 `clearProxyViaSecureSettings()`。
+
 ### 日常使用
 
 1. 打开 App，确认 Shizuku 状态为 **READY**
@@ -375,6 +395,26 @@ release buildType 里**没有** `isLintVitalCheckEnabled` 属性，加了会编�
 
 如果需要通过 GitHub API 拉 Actions 构建日志精确定位编译错误，需要 token。**用户提供的 token 必须牢记**，不要每次都问。
 
+### 16. WRITE_SECURE_SETTINGS 防止网络瘫痪（关键！）
+
+**问题根因**：`settings put global http_proxy` 是持久化写入，手表重启不清除。Shizuku 被系统省电杀掉后，`http_proxy=127.0.0.1:7890` 残留但 mihomo 进程没在跑 → 整机流量被劫持到不存在的端口 → **WiFi/蓝牙网络共享全瘫，重启也无法自愈**（Shizuku 和 mihomo 都不自启）。
+
+**解决方案**：在 Manifest 声明 `WRITE_SECURE_SETTINGS` 权限，用户通过 ADB 一次性授权：
+
+```bash
+adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
+```
+
+授权后持久有效（重启不丢失）。App 在以下场景用 `Settings.Global.putString()` 清 http_proxy（不依赖 Shizuku）：
+
+1. `checkResidualProxyOnStartup()`：App 启动时检测残留代理，有权限直接清
+2. `stopProxy()`：Shizuku runner 不可用时，用 App 自己权限清
+3. `stopProxy()` 异常兜底：Shizuku 通道清代理失败时，用权限兜底
+
+涉及文件：[AndroidManifest.xml](app/src/main/AndroidManifest.xml)（权限声明）、[AppViewModel.kt](app/src/main/java/com/ys/proxy/AppViewModel.kt)（`hasSecureSettingsPermission()` / `clearProxyViaSecureSettings()`）。
+
+**注意**：mihomo 进程是 shell 权限启动的，App 没有 shell 权限杀不了。但 http_proxy 清了网络就恢复，mihomo 空跑无害，下次启动时 `pkill -9` 会顺带清掉。
+
 ---
 
 ## 接手指南
@@ -452,9 +492,23 @@ mihomo 启动后 API 需要几秒才能响应。当前实现已加 10 秒轮询�
 
 切换订阅用热重载（`PUT /configs?force=true`），节点列表会清空。重新点 **选择节点** 加载新订阅的节点。
 
-### 重启手表后代理失效
+### 重启手表后网络瘫痪 / 代理失效
 
-手表重启后 mihomo 进程和 Shizuku 服务都会断。需要重新用 ADB 启动 Shizuku，然后打开 App 点 **启动**。（本项目未实现开机自启，因为 Shizuku 服务本身就需要 ADB 启动，开机自启意义不大）
+手表重启后 mihomo 进程和 Shizuku 服务都会断，但 `http_proxy` 持久化残留。如果没授权 WRITE_SECURE_SETTINGS，`http_proxy=127.0.0.1:7890` 残留但 mihomo 没在跑 → 整机网络瘫痪。
+
+**一次性永久解决**（推荐）：
+```bash
+adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
+```
+授权后，App 启动时会自动检测并清除残留代理，不需要 Shizuku。
+
+**手动临时解决**：
+```bash
+adb shell settings delete global http_proxy
+```
+然后重新用 ADB 启动 Shizuku，打开 App 点 **启动**。
+
+（本项目未实现开机自启，因为 Shizuku 服务本身就需要 ADB 启动，开机自启意义不大）
 
 ### 无法覆盖安装：软件包与现有软件包存在冲突
 
