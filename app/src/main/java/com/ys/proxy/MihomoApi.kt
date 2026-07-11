@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit
 class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private val secret: String = "watch123") {
 
     private val client = OkHttpClient.Builder()
-        .proxy(Proxy.NO_PROXY)
+        .proxy(java.net.Proxy.NO_PROXY)
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .build()

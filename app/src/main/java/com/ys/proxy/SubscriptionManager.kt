@@ -23,7 +23,7 @@ class SubscriptionManager {
      *  如果旧 mihomo 残留了 http_proxy=127.0.0.1:7890 但进程已死,
      *  直连下载会连不上 → "无法连接"。 */
     private val directClient: OkHttpClient = OkHttpClient.Builder()
-        .proxy(Proxy.NO_PROXY)
+        .proxy(java.net.Proxy.NO_PROXY)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
@@ -68,8 +68,8 @@ class SubscriptionManager {
      */
     fun injectControllerConfig(rawConfig: String, secret: String = "watch123"): String {
         val overrideKeys = setOf(
-            "mixed-port", "external-controller", "secret", "allow-lan", "mode",
-            "log-level", "external-ui"
+            "mixed-port", "socks-port", "port", "external-controller", "secret",
+            "allow-lan", "mode", "log-level", "external-ui"
         )
 
         // 过滤掉用户 config 里的覆盖项,避免重复 key
@@ -87,6 +87,8 @@ class SubscriptionManager {
         val header = buildString {
             appendLine("# === mihomo-watch-proxy 注入配置 ===")
             appendLine("mixed-port: 7890")
+            appendLine("# 独立 SOCKS5 端口,供 TgWrist 等需要纯 SOCKS 代理的 App 使用")
+            appendLine("socks-port: 7891")
             appendLine("allow-lan: false")
             appendLine("mode: rule")
             appendLine("log-level: info")
