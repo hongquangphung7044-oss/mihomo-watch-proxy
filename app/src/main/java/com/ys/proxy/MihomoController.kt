@@ -94,17 +94,19 @@ class MihomoController(private val context: Context) {
         installBinary(runner)
         // 2. 配置
         installConfig(runner, configContent)
-        // 3. 启动 mihomo(nohup 脱离 runner 进程生命周期)
-        runner("pkill -f $MIHOMO_BIN 2>/dev/null; sleep 1; true")
+        // 3. 先彻底停旧 mihomo(SIGKILL,避免端口 7890 占用导致新进程启动失败)
+        //    sleep 后再杀一次,确保僵尸进程清干净
+        runner("pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; true")
+        // 4. 启动 mihomo(nohup 脱离 runner 进程生命周期)
         runner("nohup $MIHOMO_BIN -d $MIHOMO_HOME > $MIHOMO_HOME/mihomo.log 2>&1 &")
         Thread.sleep(1500)  // 给 mihomo 启动时间
-        // 4. 验证启动
+        // 5. 验证启动
         val pgrep = runner("pgrep -f mihomo 2>/dev/null || echo NONE")
         if (pgrep.contains("NONE") || pgrep.isBlank()) {
             val log = runner("tail -30 $MIHOMO_HOME/mihomo.log 2>&1")
             throw RuntimeException("mihomo 启动失败,日志:\n$log")
         }
-        // 5. 设全局代理
+        // 6. 设全局代理
         runner("settings put global http_proxy $PROXY_ADDR")
         val proxy = runner("settings get global http_proxy")
         if (!proxy.contains(PROXY_ADDR)) {

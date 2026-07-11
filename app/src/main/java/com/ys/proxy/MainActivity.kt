@@ -15,7 +15,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -136,10 +140,24 @@ private fun SaveSubscriptionDialog(vm: AppViewModel) {
 private fun MainScreen(vm: AppViewModel) {
     val listState = rememberScalingLazyListState()
     val ctx = LocalContext.current  // 在 composable 作用域取,onClick 里用
-    // ScalingLazyColumn 在 Wear Compose 1.3.0+ 已内置 rotary input 支持(touch bezel 自动响应)
+    val scope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(focusRequester)
+            .focusable()
+            .onRotaryScrollEvent { e ->
+                val v = e.verticalScrollPixels * 0.5f
+                if (v != 0f) {
+                    scope.launch { listState.requestScrollBy(v) }
+                    true
+                } else {
+                    false
+                }
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
         contentPadding = PaddingValues(vertical = 20.dp)
     ) {
@@ -368,9 +386,24 @@ private fun MainScreen(vm: AppViewModel) {
 @Composable
 private fun NodesScreen(vm: AppViewModel) {
     val listState = rememberScalingLazyListState()
+    val scope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     ScalingLazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .focusRequester(focusRequester)
+            .focusable()
+            .onRotaryScrollEvent { e ->
+                val v = e.verticalScrollPixels * 0.5f
+                if (v != 0f) {
+                    scope.launch { listState.requestScrollBy(v) }
+                    true
+                } else {
+                    false
+                }
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
         contentPadding = PaddingValues(vertical = 20.dp)
     ) {

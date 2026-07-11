@@ -12,8 +12,10 @@ android {
         // Galaxy Watch7 国行 Wear OS 5 = API 34。早期 Wear OS 3 = API 30
         minSdk = 30
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // versionCode 用 GitHub Actions run number 自动递增,本地构建默认 1
+        // versionName 也带 build 号,方便用户报问题时定位构建版本
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
 
         // 关键: 只打 32 位 armv7,适配三星手表
         ndk {
