@@ -170,12 +170,38 @@ class MihomoController(private val context: Context) {
         }
     }
 
-    /** 停止:先清代理,再杀 mihomo */
+    /**
+     * 停止:先清代理,再杀 mihomo。
+     *
+     * 关键修复(网络瘫痪 bug):
+     *  旧版只是 try/catch 静默吞掉异常,一旦 Shizuku runner 通道异常(命令执行失败但
+     *  不抛异常,只返回错误字符串),http_proxy 清不掉 → 整机网络瘫痪,重启也无法自愈。
+     *  现在改为:清完后读回验证,没清干净就抛异常,让 UI 明确告知用户停止失败。
+     *
+     * @throws RuntimeException 如果代理没清除干净(用户需要知道,否则以为停了其实还瘫着)
+     */
     fun stop(runner: CommandRunner) {
-        try { runner("settings delete global http_proxy") } catch (_: Exception) {}
-        try { runner("settings put global http_proxy :0") } catch (_: Exception) {}
-        // SIGKILL 立即杀,避免 SIGTERM 退出延迟导致 isRunning 误判还在跑
+        // 1. 清全局代理(两条命令都跑,兼容不同系统)
+        var lastErr = ""
+        try { runner("settings delete global http_proxy") } catch (e: Exception) { lastErr = e.message ?: "" }
+        try { runner("settings put global http_proxy :0") } catch (e: Exception) { lastErr = e.message ?: "" }
+        // 2. 验证 http_proxy 确实清掉了(没清掉会导致整机网络瘫痪)
+        val proxy = try { runner("settings get global http_proxy") } catch (e: Exception) { lastErr = e.message ?: ""; "" }
+        if (proxy.isNotBlank() && proxy.contains(":") && !proxy.contains(":0")) {
+            throw RuntimeException(
+                "全局代理清除失败!当前 http_proxy=$proxy\n" +
+                "这会导致整机网络瘫痪(所有流量被劫持到不存在的 7890 端口)。\n" +
+                "请用 ADB 手动清理:adb shell settings delete global http_proxy\n" +
+                "或确认 Shizuku 服务正在运行后重试。"
+            )
+        }
+        // 3. SIGKILL 立即杀 mihomo,避免 SIGTERM 退出延迟导致 isRunning 误判还在跑
         try { runner("pkill -9 -f mihomo 2>/dev/null; sleep 0.3; pkill -9 -f mihomo 2>/dev/null; true") } catch (_: Exception) {}
+        // 4. 验证 mihomo 确实杀了(没杀掉会导致下次启动端口冲突)
+        val pgrep = try { runner("pgrep -f mihomo 2>/dev/null || echo NONE") } catch (_: Exception) { "NONE" }
+        if (!pgrep.contains("NONE") && pgrep.isNotBlank()) {
+            throw RuntimeException("mihomo 进程未完全停止(可能需要重试)。残留 PID: ${pgrep.trim()}")
+        }
     }
 
     /** mihomo 是否在运行 */

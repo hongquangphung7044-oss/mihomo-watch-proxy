@@ -53,6 +53,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         savedSubscriptions = subStore.list()
         // 恢复上次使用的订阅链接(删后台重启不用重输)
         subscriptionUrl = prefs.getString(KEY_LAST_URL, "") ?: ""
+        // 关键修复:App 启动时检测残留全局代理(不依赖 Shizuku)。
+        // 场景:手表重启后 Shizuku/mihomo 都不自启,但 http_proxy 是持久化的,
+        // 残留 127.0.0.1:7890 会导致整机网络瘫痪。这里提前警告用户。
+        checkResidualProxyOnStartup()
+    }
+
+    /**
+     * App 启动时检测残留全局代理(不依赖 Shizuku,普通 App 可读 Settings.Global)。
+     * 如果检测到残留代理且 mihomo 没在跑,设置 error 警告用户整机网络可能瘫痪。
+     */
+    private fun checkResidualProxyOnStartup() {
+        val residual = getResidualHttpProxy() ?: return
+        // 有残留代理,警告用户(此时还不知道 mihomo 是否在跑,先警告)
+        // refreshShizuku 会在 Shizuku 就绪后自动清理
+        error = "检测到残留全局代理: $residual\n" +
+            "如果网络无法使用,可能是代理残留导致。\n" +
+            "若 Shizuku 已就绪,App 会自动清理;否则请用 ADB:\n" +
+            "adb shell settings delete global http_proxy"
+        appendLog("警告:检测到残留全局代理 $residual")
     }
 
     enum class ShizukuState { NOT_INSTALLED, NOT_RUNNING, NO_PERMISSION, READY }
@@ -119,6 +138,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             runner("settings delete global http_proxy")
                             runner("settings put global http_proxy :0")
                             appendLog("清理了残留的全局代理(旧 mihomo 未运行)")
+                            // 清除启动时的残留代理警告
+                            error = null
                         } catch (_: Exception) {}
                     }
                 }
@@ -409,14 +430,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopProxy() {
-        val runner = getRunner() ?: run {
-            error = "无可用执行通道"; return
+        val runner = getRunner()
+        if (runner == null) {
+            // 关键修复:runner 不可用时不能静默放弃!
+            // 旧版直接 return,导致 http_proxy 残留 → 整机网络瘫痪 → 重启也无法自愈。
+            // 现在检测残留代理并给用户明确的自救指引。
+            val residualProxy = getResidualHttpProxy()
+            error = if (residualProxy != null) {
+                "Shizuku 通道不可用,无法停止代理!\n" +
+                "检测到残留全局代理: $residualProxy\n" +
+                "这会导致整机网络瘫痪(WiFi/蓝牙网络共享全失效)。\n\n" +
+                "自救方法(任选其一):\n" +
+                "1. 启动 Shizuku 服务后重新点'停止'\n" +
+                "2. ADB 执行: adb shell settings delete global http_proxy"
+            } else {
+                "Shizuku 通道不可用,无法停止代理。\n" +
+                "请先启动 Shizuku 服务(打开 Shizuku App 按提示操作),再点'停止'。"
+            }
+            return
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // 先停前台服务(通知消失)
                 MihomoForegroundService.stop(getApplication())
-                // 停 mihomo 进程(SIGKILL 确保立即退出,避免状态残留)
+                // 停 mihomo 进程 + 清代理(controller.stop 内部会验证清理结果)
                 controller.stop(runner)
                 // 等待 500ms 让进程真正退出,避免 refreshShizuku 误判还在跑
                 Thread.sleep(500)
@@ -424,8 +461,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 groups = emptyList()
                 appendLog("已停止,代理已清除")
             } catch (e: Exception) {
-                error = "停止失败: ${e.message}"
+                // controller.stop 验证失败会抛异常,这里显示给用户
+                // 即使停止失败,也更新一下状态(可能 mihomo 杀了但代理没清,或反之)
+                isRunning = controller.isRunning(runner)
+                error = e.message ?: "停止失败"
+                appendLog("停止异常: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * 检测系统残留的全局 http 代理(不依赖 Shizuku)。
+     * 用 Settings.Global API 读取,普通 App 权限即可读(写才需要 WRITE_SECURE_SETTINGS)。
+     *
+     * 用于:Shizuku 不可用时,仍能告知用户是否有残留代理导致网络瘫痪。
+     *
+     * @return 残留的代理地址(如 "127.0.0.1:7890"),无残留返回 null
+     */
+    private fun getResidualHttpProxy(): String? {
+        return try {
+            val proxy = android.provider.Settings.Global.getString(
+                getApplication<Application>().contentResolver,
+                android.provider.Settings.Global.HTTP_PROXY
+            )
+            // :0 或空 表示无代理
+            if (proxy.isNullOrBlank() || proxy == ":0") null else proxy
+        } catch (_: Exception) {
+            null
         }
     }
 
