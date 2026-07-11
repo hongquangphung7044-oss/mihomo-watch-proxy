@@ -27,11 +27,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
-import androidx.wear.compose.material.Colors
 
 class MainActivity : ComponentActivity() {
 
     // 自定义配色:琥珀色主色(与图标 M 一致)+ 绿色辅色(运行状态)
+    // 注意:Wear Compose M2 的 Colors 类不支持 onSurfaceVariant(那是手机版 M2/M3 才有的字段)
     private val ProxyColors = Colors(
         primary = Color(0xFFFFC107),
         primaryVariant = Color(0xFFFFB300),
@@ -44,7 +44,6 @@ class MainActivity : ComponentActivity() {
         onSecondary = Color.Black,
         onBackground = Color.White,
         onSurface = Color.White,
-        onSurfaceVariant = Color(0xFFCCCCCC),
         onError = Color.Black
     )
 
