@@ -99,14 +99,28 @@ class MihomoController(private val context: Context) {
         runner("pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; pkill -9 -f $MIHOMO_BIN 2>/dev/null; sleep 0.5; true")
         // 4. 启动 mihomo(nohup 脱离 runner 进程生命周期)
         runner("nohup $MIHOMO_BIN -d $MIHOMO_HOME > $MIHOMO_HOME/mihomo.log 2>&1 &")
-        Thread.sleep(1500)  // 给 mihomo 启动时间
-        // 5. 验证启动
-        val pgrep = runner("pgrep -f mihomo 2>/dev/null || echo NONE")
+        Thread.sleep(2000)  // 给 mihomo 启动时间(配置加载需要时间)
+        // 5. 验证启动:pgrep + 端口 9090 是否监听
+        val pgrep = runner("pgrep -f $MIHOMO_BIN 2>/dev/null || echo NONE")
         if (pgrep.contains("NONE") || pgrep.isBlank()) {
             val log = runner("tail -30 $MIHOMO_HOME/mihomo.log 2>&1")
             throw RuntimeException("mihomo 启动失败,日志:\n$log")
         }
-        // 6. 设全局代理
+        // 6. 等 API 端口就绪(进程在跑 ≠ 配置加载完,9090 监听才算就绪)
+        var portReady = false
+        for (i in 1..10) {
+            val check = runner("netstat -tnl 2>/dev/null | grep ':9090' || echo NO_PORT")
+            if (!check.contains("NO_PORT")) {
+                portReady = true
+                break
+            }
+            Thread.sleep(500)
+        }
+        if (!portReady) {
+            val log = runner("tail -40 $MIHOMO_HOME/mihomo.log 2>&1")
+            throw RuntimeException("mihomo 启动了但 API 端口 9090 未就绪,可能配置错误。日志:\n$log")
+        }
+        // 7. 设全局代理
         runner("settings put global http_proxy $PROXY_ADDR")
         val proxy = runner("settings get global http_proxy")
         if (!proxy.contains(PROXY_ADDR)) {

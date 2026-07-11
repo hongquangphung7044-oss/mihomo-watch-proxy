@@ -23,11 +23,10 @@ android {
         }
     }
 
-    // 显式定义签名配置,确保 release 和 debug 用同一个 keystore(可覆盖安装)
-    // storeFile 指向 ~/.android/debug.keystore(CI 缓存这个文件保证签名一致)
+    // 显式定义签名配置,keystore 提交到仓库内(非敏感),100% 保证签名一致可覆盖安装
     signingConfigs {
         getByName("debug") {
-            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storeFile = file("debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"

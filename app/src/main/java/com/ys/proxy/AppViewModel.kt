@@ -336,24 +336,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val config = subscription.injectControllerConfig(raw)
                 appendLog("配置生成完成,启动 mihomo...")
                 controller.start(runner, config)
-                // 等 mihomo API 就绪(启动后加载配置需要时间,立即调 API 会失败)
-                appendLog("等待 mihomo API 就绪...")
+                // controller.start 内部已验证 9090 端口就绪,这里再确认 API 可调
+                appendLog("验证 mihomo API...")
                 var ready = false
-                for (i in 1..20) {  // 最多等 10 秒
+                var lastErr: String? = null
+                for (i in 1..6) {  // 最多再等 3 秒
                     try {
                         api.getProxies()
                         ready = true
                         break
                     } catch (e: Exception) {
+                        lastErr = e.message
                         Thread.sleep(500)
                     }
                 }
-                isRunning = true
-                if (ready) {
-                    appendLog("启动成功,API 就绪,全局代理: ${MihomoController.PROXY_ADDR}")
-                } else {
-                    appendLog("启动成功,但 API 未就绪(可稍后重试选择节点)")
+                if (!ready) {
+                    // API 不通说明 mihomo 配置有问题,读日志给用户看
+                    val log = controller.tailLog(runner, 40)
+                    throw RuntimeException("mihomo API 无法连接: ${lastErr}\nmihomo 日志:\n$log")
                 }
+                isRunning = true
+                appendLog("启动成功,API 就绪,全局代理: ${MihomoController.PROXY_ADDR}")
                 // 显示表盘"运行中"指示器(三星手表底部圆圈) + 持久通知
                 MihomoForegroundService.start(getApplication())
             } catch (e: Exception) {
@@ -439,7 +442,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 groups = api.getSelectorGroups()
                 if (groups.isNotEmpty()) screen = Screen.Nodes
             } catch (e: Exception) {
-                error = "加载节点失败: ${e.message} (mihomo 可能尚未就绪)"
+                // API 不通时检查 mihomo 是否还活着,给用户精确诊断
+                val runner = getRunner()
+                if (runner != null) {
+                    val alive = controller.isRunning(runner)
+                    if (!alive) {
+                        isRunning = false
+                        val log = controller.tailLog(runner, 30)
+                        error = "mihomo 已崩溃,无法连接 API。日志:\n$log"
+                    } else {
+                        error = "无法连接 mihomo API: ${e.message}\n(进程在跑但 9090 端口不通,可能配置错误)"
+                    }
+                } else {
+                    error = "无法连接 mihomo API: ${e.message}"
+                }
             }
         }
     }
