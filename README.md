@@ -68,7 +68,7 @@
 ## 功能特性
 
 - ✅ 多订阅管理：保存/载入/删除多个机场订阅
-- ✅ 节点延迟测试（5 并发优化）+ 按延迟排序
+- ✅ 节点延迟测试（10 并发 + UI 节流更新,避免闪退）+ 按延迟排序
 - ✅ 持久化：订阅链接、排序偏好
 - ✅ 订阅热重载：切换订阅不停 mihomo 进程，不断流
 - ✅ 通过当前代理下载新订阅（支持"用直连订阅 A 开代理，再切换到需代理的订阅 B"场景）
@@ -189,25 +189,24 @@ curl -L -o app/src/main/assets/geosite.dat \
    - 启动 Shizuku：`adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh`
 3. **给本 App 授权**：打开 Shizuku App → 授权 mihomo-watch-proxy
 
-### ⚠️ 强烈建议：一次性授权 WRITE_SECURE_SETTINGS（防止网络瘫痪）
+### ⚠️ 重要：Shizuku 被杀后可能网络瘫痪
 
 **背景**：`http_proxy` 是持久化写入（存在系统设置数据库），手表重启不清除。如果 Shizuku 服务被系统省电杀掉，`http_proxy=127.0.0.1:7890` 残留但 mihomo 进程没在跑 → **整机网络瘫痪**（WiFi/蓝牙网络共享全失效，重启也无法自愈）。
 
-**解决方案**：通过 ADB 一次性授予 WRITE_SECURE_SETTINGS 权限，授权后**永久有效**（重启不丢失，除非卸载 App）。App 就能在 Shizuku 不可用时自己清除 http_proxy，不再依赖 Shizuku：
+**当前版本处理**：App 打开时会自动检测残留代理并显示警告 + 自救方法。但 App 没有 shell 权限，无法自动清除（需 Shizuku 才能清）。
+
+**如果网络瘫痪了**，用 ADB 自救：
 
 ```bash
-adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
+# 清 http_proxy(恢复网络)
+adb shell settings delete global http_proxy
+# 杀残留 mihomo 进程
+adb shell pkill -9 -x mihomo
 ```
 
-授权后的防护效果：
+然后重新启动 Shizuku，打开 App 点启动。
 
-| 场景 | 未授权 | 已授权 |
-|------|--------|--------|
-| Shizuku 被省电杀掉 | ❌ 网络瘫痪 | ✅ App 启动时自动清 http_proxy |
-| 手表重启后打开 App | ❌ 网络瘫痪 | ✅ 自动检测并清除残留代理 |
-| 点停止时 Shizuku 没运行 | ❌ 无法清代理 | ✅ 用 App 自己权限清代理 |
-
-> 此权限只允许 App 修改系统设置中的 http_proxy，不会带来安全风险。权限声明在 [AndroidManifest.xml](app/src/main/AndroidManifest.xml)，实际使用逻辑在 [AppViewModel.kt](app/src/main/java/com/ys/proxy/AppViewModel.kt) 的 `clearProxyViaSecureSettings()`。
+**预防建议**：不要在代理运行时关闭 Shizuku。如需停止代理，先在 App 里点"停止"，确认停止成功后再关 Shizuku。
 
 ### 日常使用
 
@@ -308,7 +307,7 @@ if (!running) {
 `pgrep` 只能验证进程在跑，**不能验证 9090 端口已就绪**。mihomo 加载配置需要时间，端口起不来说明配置有问题。
 
 `MihomoController.start()` 必须两步验证：
-1. `pgrep -f mihomo` 验证进程
+1. `pgrep -x mihomo` 验证进程(精确匹配进程名,不用 `-f`)
 2. `netstat -tnl | grep ':9090'` 验证端口（轮询 10 次，每次 500ms）
 
 `AppViewModel.doStartProxy()` 还要再调 `api.getProxies()` 确认 API 可用，失败就抛异常显示日志。
@@ -341,19 +340,26 @@ androidResources {
 
 release 也用 debug 签名，方便用户直接覆盖安装。
 
-### 8. SIGKILL 而非 SIGTERM
+### 8. SIGKILL + pkill -x 精确匹配(关键!)
 
-`MihomoController.stop()` 和 `start()` 开头的杀进程都用 `pkill -9`（SIGKILL），不用默认 SIGTERM：
+`MihomoController.stop()` 和 `start()` 杀进程用 `pkill -9 -x mihomo`(SIGKILL + 精确匹配进程名),**不能用 `pkill -9 -f mihomo`**:
 
 ```bash
-pkill -9 -f mihomo 2>/dev/null; sleep 0.5; pkill -9 -f mihomo 2>/dev/null; true
+# ❌ 错误:-f 匹配整个命令行,执行命令的 shell(sh -c "pkill -9 -f mihomo")
+#         命令行也包含 "mihomo",pkill 会先杀掉 shell 自身 → 命令中断
+#         → 旧 mihomo 杀不掉 → 9090 端口被占 → 新 mihomo 起不来 → 完全卡死
+pkill -9 -f mihomo
+
+# ✅ 正确:-x 精确匹配进程名(comm="mihomo"),shell 的 comm 是 "sh" 不被匹配
+pkill -9 -x mihomo
 ```
 
-SIGTERM 退出有延迟，可能导致：
-- 端口 7890 还被旧进程占用 → 新 mihomo 启动失败
-- `isRunning` 误判还在跑
+`killAllMihomo()` 三重保险:
+1. `pkill -9 -x mihomo` — 精确匹配进程名
+2. `ps | grep '[m]ihomo' | xargs kill -9` — 中括号防 grep 匹配自身,兜底
+3. 再 `pkill -9 -x mihomo` 一次清残留
 
-杀两次 + sleep 0.5 确保僵尸进程清干净。
+SIGKILL(而非 SIGTERM)确保立即退出,避免端口 7890/9090 被旧进程占用导致新 mihomo 启动失败。
 
 ### 9. refreshShizuku 必须异步
 
@@ -395,25 +401,48 @@ release buildType 里**没有** `isLintVitalCheckEnabled` 属性，加了会编�
 
 如果需要通过 GitHub API 拉 Actions 构建日志精确定位编译错误，需要 token。**用户提供的 token 必须牢记**，不要每次都问。
 
-### 16. WRITE_SECURE_SETTINGS 防止网络瘫痪（关键！）
+### 16. Shizuku 被杀后 http_proxy 残留(关键!)
 
-**问题根因**：`settings put global http_proxy` 是持久化写入，手表重启不清除。Shizuku 被系统省电杀掉后，`http_proxy=127.0.0.1:7890` 残留但 mihomo 进程没在跑 → 整机流量被劫持到不存在的端口 → **WiFi/蓝牙网络共享全瘫，重启也无法自愈**（Shizuku 和 mihomo 都不自启）。
+**问题根因**：`settings put global http_proxy` 是持久化写入，手表重启不清除。Shizuku 被系统省电杀掉后:
+- `http_proxy=127.0.0.1:7890` 残留但 mihomo 进程可能没在跑 → 整机流量被劫持到不存在的端口 → **WiFi/蓝牙网络共享全瘫**
+- Shizuku 不可用时,App 没 shell 权限,既杀不了 mihomo 也清不了 http_proxy
 
-**解决方案**：在 Manifest 声明 `WRITE_SECURE_SETTINGS` 权限，用户通过 ADB 一次性授权：
+**当前版本(bcc4b54)的处理**:
+- `refreshShizuku()` 的 else 分支:异步读 `Settings.Global.HTTP_PROXY`(ContentResolver,普通 App 可读),检测到残留代理时显示警告 + ADB 自救方法
+- `stopProxy()`:Shizuku 不可用时不再默默 return,给清晰提示和 ADB 命令
 
+**用户自救方法**:
 ```bash
-adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
+# 1. 清 http_proxy(恢复网络)
+adb shell settings delete global http_proxy
+# 2. 杀残留 mihomo 进程
+adb shell pkill -9 -x mihomo
+# 3. 启动 Shizuku 后重新打开 App
 ```
 
-授权后持久有效（重启不丢失）。App 在以下场景用 `Settings.Global.putString()` 清 http_proxy（不依赖 Shizuku）：
+**历史说明**:之前版本(73c4880~9734ee5)曾尝试用 `WRITE_SECURE_SETTINGS` 权限让 App 自动清 http_proxy,但引入了启动崩溃 bug,已回滚。后续可考虑谨慎加回(不在 init 块做异步操作)。
 
-1. `checkResidualProxyOnStartup()`：App 启动时检测残留代理，有权限直接清
-2. `stopProxy()`：Shizuku runner 不可用时，用 App 自己权限清
-3. `stopProxy()` 异常兜底：Shizuku 通道清代理失败时，用权限兜底
+### 17. Shizuku binder 回调在非主线程触发(关键!)
 
-涉及文件：[AndroidManifest.xml](app/src/main/AndroidManifest.xml)（权限声明）、[AppViewModel.kt](app/src/main/java/com/ys/proxy/AppViewModel.kt)（`hasSecureSettingsPermission()` / `clearProxyViaSecureSettings()`）。
+`Shizuku.addBinderDeadListener` / `ServiceConnection` 回调 / `OnRequestPermissionResultListener` 回调**都在 binder 线程执行**,不是主线程!
 
-**注意**：mihomo 进程是 shell 权限启动的，App 没有 shell 权限杀不了。但 http_proxy 清了网络就恢复，mihomo 空跑无害，下次启动时 `pkill -9` 会顺带清掉。
+回调里直接修改 Compose `mutableStateOf`(如 `shizukuState`、`isRunning`、`error`、`service`)会抛 `IllegalStateException` → **App 闪退**。
+
+**必须用 `mainHandler.post { }` 切回主线程**:
+- `AppViewModel.init`: `shizuku.onStateChanged = { mainHandler.post { refreshShizuku() } }`
+- `ShizukuManager.bind()`: `onConnectedMain` / `onFailedMain` 包装所有回调
+- `ShizukuManager.requestPermission()`: `onResultMain` 包装
+
+### 18. 测延迟 UI 更新必须节流(关键!)
+
+节点多时(几百个),每测完一个就 `mainHandler.post { delays = snapshot }` 更新 Compose state,主线程被频繁重组淹没 → **手表 CPU 扛不住 → 闪退**。
+
+`testAllDelays()` 必须:
+1. **UI 更新节流**:800ms 间隔才更新一次(`AtomicLong` 记录上次更新时间)
+2. **toMap() 加同步**:`synchronized(result) { result.toMap() }`,否则 `ConcurrentModificationException`
+3. **全部测完最终更新一次**:确保显示完整结果
+
+并发用 `Semaphore(10)` 限流(比 5 快,机场一般能承受)。
 
 ---
 
@@ -459,9 +488,9 @@ const val secret = "watch123"                // mihomo API 密码（订阅注入
 1. **诊断面板**：主界面点 **诊断** 看 Shizuku 状态、反射测试、bind 失败原因
 2. **mihomo 日志**：`adb shell tail -f /data/local/tmp/mihomo_home/mihomo.log`（需 shell 权限）
 3. **看全局代理**：`adb shell settings get global http_proxy`
-4. **看 mihomo 进程**：`adb shell pgrep -f mihomo`
+4. **看 mihomo 进程**：`adb shell pgrep -x mihomo`(精确匹配,不用 `-f`)
 5. **看 9090 端口**：`adb shell netstat -tnl | grep 9090`
-6. **手动停止 mihomo**：`adb shell pkill -9 -f mihomo && adb shell settings delete global http_proxy`
+6. **手动停止 mihomo**：`adb shell pkill -9 -x mihomo && adb shell settings delete global http_proxy`
 7. **看 geo 文件**：`adb shell ls -la /data/local/tmp/mihomo_home/`（geoip.metadb 应约 8.8MB）
 
 ### 测试反射通道
@@ -494,19 +523,18 @@ mihomo 启动后 API 需要几秒才能响应。当前实现已加 10 秒轮询�
 
 ### 重启手表后网络瘫痪 / 代理失效
 
-手表重启后 mihomo 进程和 Shizuku 服务都会断，但 `http_proxy` 持久化残留。如果没授权 WRITE_SECURE_SETTINGS，`http_proxy=127.0.0.1:7890` 残留但 mihomo 没在跑 → 整机网络瘫痪。
+手表重启后 mihomo 进程和 Shizuku 服务都会断，但 `http_proxy` 持久化残留。`http_proxy=127.0.0.1:7890` 残留但 mihomo 没在跑 → 整机网络瘫痪。
 
-**一次性永久解决**（推荐）：
+**自救方法**：
 ```bash
-adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS
-```
-授权后，App 启动时会自动检测并清除残留代理，不需要 Shizuku。
-
-**手动临时解决**：
-```bash
+# 清 http_proxy(恢复网络)
 adb shell settings delete global http_proxy
+# 杀残留 mihomo 进程
+adb shell pkill -9 -x mihomo
 ```
 然后重新用 ADB 启动 Shizuku，打开 App 点 **启动**。
+
+**App 会自动检测**：打开 App 时会自动检测残留代理并显示警告 + 自救方法(但无法自动清除,需 Shizuku)。
 
 （本项目未实现开机自启，因为 Shizuku 服务本身就需要 ADB 启动，开机自启意义不大）
 

@@ -564,7 +564,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val sem = Semaphore(10)
                 val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 // 节流:UI 更新间隔 800ms,避免节点多时频繁重组卡死/闪退
-                var lastUiUpdate = 0L
+                // 用 AtomicLong 避免多协程数据竞争
+                val lastUiUpdate = java.util.concurrent.atomic.AtomicLong(0L)
                 val uiInterval = 800L
                 val jobs = allNodes.map { node ->
                     async {
@@ -575,9 +576,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             done.incrementAndGet()
                             // 节流更新 UI:距上次更新超过 800ms 才更新
                             val now = System.currentTimeMillis()
-                            if (now - lastUiUpdate > uiInterval) {
-                                lastUiUpdate = now
-                                val snapshot = result.toMap()
+                            if (now - lastUiUpdate.get() > uiInterval) {
+                                lastUiUpdate.set(now)
+                                // toMap() 也必须在同步块内,否则 ConcurrentModificationException
+                                val snapshot = synchronized(result) { result.toMap() }
                                 mainHandler.post { delays = snapshot }
                             }
                         } finally {
@@ -587,7 +589,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 awaitAll(*jobs.toTypedArray())
                 // 全部测完,最终更新一次 UI(确保显示完整结果)
-                mainHandler.post { delays = result.toMap() }
+                val finalSnapshot = synchronized(result) { result.toMap() }
+                mainHandler.post { delays = finalSnapshot }
                 appendLog("延迟测试完成 ${done.get()}/${total}")
             } catch (e: Exception) {
                 error = "测延迟失败: ${e.message}"
