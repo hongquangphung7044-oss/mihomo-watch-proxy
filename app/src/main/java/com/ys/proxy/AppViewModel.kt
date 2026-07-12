@@ -126,6 +126,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+        } else {
+            // Shizuku 不可用:isRunning 无法检测,但 http_proxy 可能残留。
+            // 谨慎修复:只读 Settings.Global 检测残留代理并警告(用 ContentResolver,
+            // 普通 App 可读,不需要 Shizuku)。不在 init 块执行,只在这里异步执行。
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val cr = getApplication<Application>().contentResolver
+                    val proxy = android.provider.Settings.Global.getString(
+                        cr, android.provider.Settings.Global.HTTP_PROXY
+                    )
+                    if (!proxy.isNullOrBlank() && proxy.contains(":") && !proxy.contains(":0")) {
+                        // 切回主线程修改 Compose state
+                        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                        mainHandler.post {
+                            error = "⚠️ Shizuku 已断开,检测到残留代理: $proxy\n" +
+                                "点'停止'可能无法清除。自救方法:\n" +
+                                "1. 启动 Shizuku 后重新操作\n" +
+                                "2. ADB: adb shell settings delete global http_proxy"
+                        }
+                    }
+                } catch (_: Exception) {
+                    // 读取失败不影响 App 运行
+                }
+            }
         }
     }
 
@@ -412,8 +436,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopProxy() {
-        val runner = getRunner() ?: run {
-            error = "无可用执行通道"; return
+        val runner = getRunner()
+        if (runner == null) {
+            // Shizuku 不可用,无法杀 mihomo 进程,但可以提示用户
+            error = "⚠️ Shizuku 通道不可用,无法停止代理!\n" +
+                "mihomo 进程和 http_proxy 可能残留。\n\n" +
+                "自救方法(任选其一):\n" +
+                "1. 启动 Shizuku 服务后重新点'停止'\n" +
+                "2. ADB: adb shell settings delete global http_proxy\n" +
+                "3. ADB 杀进程: adb shell pkill -9 -x mihomo"
+            return
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -529,14 +561,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val done = AtomicInteger(0)
                 // 用 Semaphore 限流 5 并发
                 val sem = Semaphore(5)
+                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 val jobs = allNodes.map { node ->
                     async {
                         sem.acquire()
                         try {
                             val d = api.testDelay(node)
                             synchronized(result) { result[node] = d }
-                            // 每测完一个刷新一次 UI
-                            delays = result.toMap()
+                            // 每测完一个刷新一次 UI(必须切回主线程修改 Compose state)
+                            val snapshot = result.toMap()
+                            mainHandler.post { delays = snapshot }
                             done.incrementAndGet()
                         } finally {
                             sem.release()
@@ -557,7 +591,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun testSingleNode(node: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val d = api.testDelay(node)
-            delays = delays.toMutableMap().apply { put(node, d) }
+            // 切回主线程修改 Compose state,避免闪退
+            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+            mainHandler.post { delays = delays.toMutableMap().apply { put(node, d) } }
         }
     }
 
