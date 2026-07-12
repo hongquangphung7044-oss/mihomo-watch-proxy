@@ -154,12 +154,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     fun refreshShizuku() {
-        shizukuState = when {
-            !shizuku.isInstalled -> ShizukuState.NOT_INSTALLED
-            !shizuku.isRunning -> ShizukuState.NOT_RUNNING
-            !shizuku.hasPermission() -> ShizukuState.NO_PERMISSION
-            else -> ShizukuState.READY
+        try {
+            refreshShizukuInternal()
+        } catch (e: Exception) {
+            // 防御性 catch:Shizuku SDK 在 binder 刚死亡时可能抛异常,
+            // 不能让任何异常导致 App 闪退。
+            appendLog("refreshShizuku 异常: ${e.message}")
         }
+    }
+
+    private fun refreshShizukuInternal() {
         // 检测 mihomo 是否在跑,只更新 isRunning 状态文字。
         // 不自动补启动 ForegroundService:避免每次打开 App 都弹通知让用户觉得"自动开启了"。
         // 用户主动点"启动"时才弹通知。

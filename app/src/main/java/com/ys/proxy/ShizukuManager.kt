@@ -122,10 +122,12 @@ class ShizukuManager(private val context: Context) {
         get() = try { Shizuku.getUid() } catch (e: Exception) { -1 }
 
     fun requestPermission(onResult: (Boolean) -> Unit) {
+        // 回调用 mainHandler.post 切到主线程(回调可能在 binder 线程触发)
+        val onResultMain: (Boolean) -> Unit = { granted -> mainHandler.post { onResult(granted) } }
         val listener = object : Shizuku.OnRequestPermissionResultListener {
             override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
                 if (requestCode == PERMISSION_REQUEST_CODE) {
-                    onResult(grantResult == PackageManager.PERMISSION_GRANTED)
+                    onResultMain(grantResult == PackageManager.PERMISSION_GRANTED)
                     Shizuku.removeRequestPermissionResultListener(this)
                 }
             }
@@ -134,7 +136,7 @@ class ShizukuManager(private val context: Context) {
         try {
             Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
         } catch (e: Exception) {
-            onResult(false)
+            onResultMain(false)
             Shizuku.removeRequestPermissionResultListener(listener)
         }
     }
@@ -143,22 +145,30 @@ class ShizukuManager(private val context: Context) {
     private var lastBindError: String = "未尝试 bind"
 
     fun bind(onConnected: (IWatchService) -> Unit, onFailed: (String) -> Unit) {
+        // 关键修复:所有回调都用 mainHandler.post 切到主线程!
+        // ServiceConnection 的回调(onServiceConnected/onBindingDied/onNullBinding)
+        // 都在 binder 线程执行,回调里调 onConnected/onFailed 修改 Compose state
+        // 会抛 IllegalStateException -> 闪退。
+        // 统一在这里包装,调用方不需要关心线程。
+        val onConnectedMain: (IWatchService) -> Unit = { s -> mainHandler.post { onConnected(s) } }
+        val onFailedMain: (String) -> Unit = { msg -> mainHandler.post { onFailed(msg) } }
+
         if (!isRunning) {
             lastBindError = "Shizuku 服务未运行(pingBinder=false)"
-            onFailed(lastBindError)
+            onFailedMain(lastBindError)
             return
         }
         if (!hasPermission()) {
             lastBindError = "未授权 Shizuku"
-            onFailed(lastBindError)
+            onFailedMain(lastBindError)
             return
         }
         service?.let { s ->
-            onConnected(s)
+            onConnectedMain(s)
             return
         }
         if (bindInProgress) {
-            onFailed("正在连接 UserService,请稍等")
+            onFailedMain("正在连接 UserService,请稍等")
             return
         }
 
@@ -170,7 +180,7 @@ class ShizukuManager(private val context: Context) {
                 bindInProgress = false
                 lastBindError = "无(已连接)"
                 service = IWatchService.Stub.asInterface(binder)
-                service?.let { onConnected(it) }
+                service?.let { onConnectedMain(it) }
                 onStateChanged?.invoke()
             }
 
@@ -187,7 +197,7 @@ class ShizukuManager(private val context: Context) {
                 service = null
                 conn = null
                 lastBindError = "onBindingDied(binder 死亡,Shizuku 服务可能被杀或重启)"
-                onFailed("Shizuku binder 死亡。请打开 Shizuku App 确认服务在运行,或重启 Shizuku 服务")
+                onFailedMain("Shizuku binder 死亡。请打开 Shizuku App 确认服务在运行,或重启 Shizuku 服务")
                 onStateChanged?.invoke()
             }
 
@@ -196,7 +206,7 @@ class ShizukuManager(private val context: Context) {
                 finished = true
                 bindInProgress = false
                 lastBindError = "onNullBinding(Shizuku 启动了 UserService 进程,但 WatchUserService.onBind 返回 null 或类加载失败)"
-                onFailed("UserService 绑定返回 null。\n可能原因:\n1. 32 位反射未生效(看诊断)\n2. WatchUserService 类在 Shizuku 进程加载失败\n3. AIDL 文件问题")
+                onFailedMain("UserService 绑定返回 null。\n可能原因:\n1. 32 位反射未生效(看诊断)\n2. WatchUserService 类在 Shizuku 进程加载失败\n3. AIDL 文件问题")
             }
         }
         conn = c
@@ -209,7 +219,7 @@ class ShizukuManager(private val context: Context) {
             bindInProgress = false
             conn = null
             lastBindError = "bindUserService 抛异常: ${e.javaClass.simpleName}: ${e.message}"
-            onFailed("bindUserService 异常: ${e.message}")
+            onFailedMain("bindUserService 异常: ${e.message}")
             return
         }
         mainHandler.postDelayed({
@@ -217,7 +227,7 @@ class ShizukuManager(private val context: Context) {
                 finished = true
                 bindInProgress = false
                 lastBindError = "超时(8秒无回调)。Shizuku 可能没真正启动 UserService 进程"
-                onFailed("连接 UserService 超时(8秒无回调)")
+                onFailedMain("连接 UserService 超时(8秒无回调)")
                 onStateChanged?.invoke()
             }
         }, BIND_TIMEOUT_MS)
