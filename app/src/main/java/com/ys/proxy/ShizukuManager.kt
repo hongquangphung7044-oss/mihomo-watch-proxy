@@ -122,7 +122,7 @@ class ShizukuManager(private val context: Context) {
         get() = try { Shizuku.getUid() } catch (e: Exception) { -1 }
 
     fun requestPermission(onResult: (Boolean) -> Unit) {
-        // 回调用 mainHandler.post 切到主线程(回调可能在 binder 线程触发)
+        // 回调可能在 binder 线程,切回主线程
         val onResultMain: (Boolean) -> Unit = { granted -> mainHandler.post { onResult(granted) } }
         val listener = object : Shizuku.OnRequestPermissionResultListener {
             override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
@@ -145,11 +145,8 @@ class ShizukuManager(private val context: Context) {
     private var lastBindError: String = "未尝试 bind"
 
     fun bind(onConnected: (IWatchService) -> Unit, onFailed: (String) -> Unit) {
-        // 关键修复:所有回调都用 mainHandler.post 切到主线程!
-        // ServiceConnection 的回调(onServiceConnected/onBindingDied/onNullBinding)
-        // 都在 binder 线程执行,回调里调 onConnected/onFailed 修改 Compose state
-        // 会抛 IllegalStateException -> 闪退。
-        // 统一在这里包装,调用方不需要关心线程。
+        // 关键修复:ServiceConnection 回调在 binder 线程触发,
+        // 回调里修改 Compose state 会闪退,统一用 mainHandler.post 切主线程
         val onConnectedMain: (IWatchService) -> Unit = { s -> mainHandler.post { onConnected(s) } }
         val onFailedMain: (String) -> Unit = { msg -> mainHandler.post { onFailed(msg) } }
 

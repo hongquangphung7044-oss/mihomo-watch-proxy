@@ -13,12 +13,6 @@
     <!-- Android 14+ 特定类型前服务权限(代理属于 specialUse) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
-    <!-- 写安全设置:用 pm grant 授权后,App 可直接清 http_proxy,
-         不依赖 Shizuku,避免 Shizuku 被杀后 http_proxy 残留导致整机网络瘫痪。
-         声明此权限不会自动获得,需 ADB 执行:
-         adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS -->
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
-
     <!-- 声明是 Wear OS 应用 -->
     <uses-feature android:name="android.hardware.type.watch" />
 

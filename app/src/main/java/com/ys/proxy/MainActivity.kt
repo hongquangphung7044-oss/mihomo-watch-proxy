@@ -294,21 +294,11 @@ private fun MainScreen(vm: AppViewModel) {
             // 启动/停止按钮
             item {
                 if (vm.isRunning) {
-                    // proxyStateUnknown: Shizuku 不可用,代理状态未知,警告用户
-                    if (vm.proxyStateUnknown) {
-                        Button(
-                            onClick = { vm.stopProxy() },
-                            colors = ButtonDefaults.secondaryButtonColors()
-                        ) {
-                            Text("停止⚠️", fontSize = 13.sp, color = Color(0xFFE53935))
-                        }
-                    } else {
-                        Button(
-                            onClick = { vm.stopProxy() },
-                            colors = ButtonDefaults.secondaryButtonColors()
-                        ) {
-                            Text("停止", fontSize = 14.sp)
-                        }
+                    Button(
+                        onClick = { vm.stopProxy() },
+                        colors = ButtonDefaults.secondaryButtonColors()
+                    ) {
+                        Text("停止", fontSize = 14.sp)
                     }
                 } else {
                     Button(
@@ -370,40 +360,6 @@ private fun MainScreen(vm: AppViewModel) {
                     fontSize = 9.sp,
                     color = Color(0xFFBBBBBB),
                     modifier = Modifier.padding(horizontal = 8.dp)
-                )
-            }
-        }
-
-        // 底部提示:授权 WRITE_SECURE_SETTINGS(防止网络瘫痪)
-        // 只在未授权时显示,授权后隐藏
-        if (!vm.hasSecureSettings) {
-            item { HintText("防止网络瘫痪(可选)") }
-            item {
-                val ctx = LocalContext.current
-                Chip(
-                    onClick = {
-                        // 复制授权命令到剪贴板
-                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(android.content.ClipData.newPlainText(
-                            "adb_grant",
-                            "adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS"
-                        ))
-                    },
-                    label = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("点此复制 ADB 命令", fontSize = 11.sp, color = Color(0xFFFFC107))
-                            Text("授权后防 Shizuku 被杀导致断网", fontSize = 8.sp, color = Color(0xFF999999))
-                        }
-                    }
-                )
-            }
-            item {
-                Text(
-                    text = "adb shell pm grant com.ys.proxy android.permission.WRITE_SECURE_SETTINGS",
-                    fontSize = 8.sp,
-                    color = Color(0xFF888888),
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                    textAlign = TextAlign.Center
                 )
             }
         }
