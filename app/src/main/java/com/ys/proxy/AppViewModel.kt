@@ -545,8 +545,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 测当前分组下所有节点延迟。
-     * 限流并发(5 路),既比串行快很多,又不至于被机场限速。
-     * 结果实时更新到 [delays]。
+     * 限流并发(10 路),既比串行快很多,又不至于被机场限速。
+     * 结果分批更新 UI(每 800ms 一次),避免节点多时频繁重组导致闪退。
      */
     fun testAllDelays() {
         if (!isRunning || groups.isEmpty()) { error = "无可用节点"; return }
@@ -556,29 +556,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val allNodes = groups.flatMap { it.all }.distinct()
-                appendLog("开始测 ${allNodes.size} 个节点延迟(5 并发)...")
+                appendLog("开始测 ${allNodes.size} 个节点延迟(10 并发)...")
                 val result = mutableMapOf<String, Int>()
                 val done = AtomicInteger(0)
-                // 用 Semaphore 限流 5 并发
-                val sem = Semaphore(5)
+                val total = allNodes.size
+                // 用 Semaphore 限流 10 并发(比 5 快,节点多时差距明显)
+                val sem = Semaphore(10)
                 val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                // 节流:UI 更新间隔 800ms,避免节点多时频繁重组卡死/闪退
+                var lastUiUpdate = 0L
+                val uiInterval = 800L
                 val jobs = allNodes.map { node ->
                     async {
                         sem.acquire()
                         try {
                             val d = api.testDelay(node)
                             synchronized(result) { result[node] = d }
-                            // 每测完一个刷新一次 UI(必须切回主线程修改 Compose state)
-                            val snapshot = result.toMap()
-                            mainHandler.post { delays = snapshot }
                             done.incrementAndGet()
+                            // 节流更新 UI:距上次更新超过 800ms 才更新
+                            val now = System.currentTimeMillis()
+                            if (now - lastUiUpdate > uiInterval) {
+                                lastUiUpdate = now
+                                val snapshot = result.toMap()
+                                mainHandler.post { delays = snapshot }
+                            }
                         } finally {
                             sem.release()
                         }
                     }
                 }
                 awaitAll(*jobs.toTypedArray())
-                appendLog("延迟测试完成 ${done.get()}/${allNodes.size}")
+                // 全部测完,最终更新一次 UI(确保显示完整结果)
+                mainHandler.post { delays = result.toMap() }
+                appendLog("延迟测试完成 ${done.get()}/${total}")
             } catch (e: Exception) {
                 error = "测延迟失败: ${e.message}"
             } finally {
