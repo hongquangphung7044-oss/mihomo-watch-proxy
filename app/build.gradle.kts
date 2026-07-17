@@ -65,7 +65,7 @@ android {
 
     // Kotlin 1.9.24 ↔ Compose Compiler 1.5.14(必须严格匹配)
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
+        kotlinCompilerExtensionVersion = "1.5.15"
     }
 
     packaging {
@@ -87,12 +87,12 @@ android {
 
 dependencies {
     // Wear OS Compose UI (注意 artifact 名: compose-material / compose-foundation, 不是 compose)
-    implementation("androidx.wear.compose:compose-material:1.3.1")
-    implementation("androidx.wear.compose:compose-foundation:1.3.1")
+    implementation("androidx.wear.compose:compose-material3:1.5.6")
+    implementation("androidx.wear.compose:compose-foundation:1.5.6")
     implementation("androidx.activity:activity-compose:1.8.2")
-    implementation("androidx.compose.ui:ui:1.6.6")
-    implementation("androidx.compose.material:material:1.6.6")
-    implementation("androidx.compose.foundation:foundation:1.6.6")
+    implementation("androidx.compose.ui:ui:1.7.7")
+    implementation("androidx.compose.material:material:1.7.7")
+    implementation("androidx.compose.foundation:foundation:1.7.7")
 
     // Wear OS Ongoing Activity API - 表盘底部"运行中"指示器(三星手表底部圆圈)
     implementation("androidx.wear:wear-ongoing:1.1.0")
