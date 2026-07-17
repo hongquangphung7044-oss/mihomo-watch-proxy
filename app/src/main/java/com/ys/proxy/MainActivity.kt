@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
         ) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
 
         setContent {
-            // 真正的 M3 主题:ColorScheme + Typography 一次性注入,
+            // M3 主题注入:ColorScheme(琥珀金 + 近黑蓝)+ Typography 一次性注入,
             // 之后所有 wear.compose.material3 组件的默认 colors/typography 都从这里取。
             MihomoTheme {
                 val vm = remember { AppViewModel(application) }
@@ -77,6 +77,10 @@ private fun AppRoot(vm: AppViewModel) {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 主界面
+// ═══════════════════════════════════════════════════════════════════════════
+
 @Composable
 private fun MainScreen(vm: AppViewModel) {
     val context = LocalContext.current
@@ -85,92 +89,194 @@ private fun MainScreen(vm: AppViewModel) {
         state = listState,
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        // Deliberately large: the circular display clips its physical edges.
-        contentPadding = PaddingValues(horizontal = 30.dp, vertical = 38.dp)
+        // 圆形屏边缘裁切,留出安全区;item 间距统一管理,不再依赖每个 item 自带 padding
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { ScreenTitle("Mihomo", if (vm.isRunning) "代理已运行" else "系统代理控制") }
-        item { StatusPanel(vm) }
+        item { HeaderCard(vm) }
+        item { StatusCard(vm) }
 
         if (vm.shizukuState == AppViewModel.ShizukuState.READY) {
-            item { SubscriptionPanel(vm, context) }
-            item { PrimaryProxyAction(vm) }
-            if (vm.isRunning) item { RunningPanel(vm) }
+            // Shizuku 就绪:展示主操作 + 订阅 + 诊断
+            item { PrimaryActionCard(vm) }
+            if (vm.isRunning) item { RunningInfoCard(vm) }
+            item { SubscriptionCard(vm, context) }
+            if (vm.savedSubscriptions.isNotEmpty()) {
+                item { SectionLabel("已保存订阅") }
+                items(vm.savedSubscriptions) { sub ->
+                    SavedSubscriptionCard(vm, sub)
+                }
+            }
+            item { DiagnosticCard(vm) }
         } else {
-            item { PreparationPanel(vm) }
+            // Shizuku 未就绪:只展示准备引导
+            item { PreparationCard(vm) }
         }
 
-        item { DiagnosticPanel(vm) }
-        vm.error?.let { error -> item { InfoPanel("需要处理", error, StatusBad, vm::clearError) } }
-        if (vm.log.isNotBlank()) item { InfoPanel("运行日志", vm.log, MaterialTheme.colorScheme.onSurfaceVariant) }
+        // 错误 / 日志作为独立卡片,绝不与诊断面板混在一起
+        vm.error?.let { err -> item { ErrorCard(err, vm::clearError) } }
+        if (vm.log.isNotBlank()) item { LogCard(vm.log) }
     }
 }
 
+/**
+ * 顶部标题卡:应用名 + 运行状态概览。
+ * 运行中用 tertiaryContainer(绿系)背景,显著区分。
+ */
 @Composable
-private fun ScreenTitle(title: String, subtitle: String) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.padding(bottom = 10.dp)
+private fun HeaderCard(vm: AppViewModel) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (vm.isRunning) MaterialTheme.colorScheme.tertiaryContainer
+                             else MaterialTheme.colorScheme.surfaceContainerHigh
+        )
     ) {
-        Text(
-            title,
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.typography.displaySmall
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            subtitle,
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.bodySmall
-        )
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "Mihomo",
+                color = if (vm.isRunning) MaterialTheme.colorScheme.onTertiaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.displaySmall
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (vm.isRunning) "● 代理运行中" else "系统代理控制",
+                color = if (vm.isRunning) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }
 
+private data class StatusInfo(
+    val title: String,
+    val detail: String,
+    val color: Color,
+    val action: ActionInfo?
+)
+
+private data class ActionInfo(val label: String, val onClick: () -> Unit)
+
+/**
+ * 状态卡片:按 4 种 ShizukuState + isRunning 区分场景。
+ * - 未安装 / 未运行 / 未授权 → 警告色(无 action 或带授权按钮)
+ * - 已就绪 → 主色(无 action 或带连接 UserService 按钮)
+ * - 运行中 → 成功色(本卡由 HeaderCard 体现,这里仍标"代理正在运行")
+ *
+ * 关键修复:本卡内部所有元素一律 Column 包裹,绝不再裸 emit。
+ */
 @Composable
-private fun StatusPanel(vm: AppViewModel) {
-    val status = when (vm.shizukuState) {
-        AppViewModel.ShizukuState.NOT_INSTALLED -> Status("Shizuku 未安装", "安装并启动 Shizuku 后再继续", StatusBad)
-        AppViewModel.ShizukuState.NOT_RUNNING -> Status("Shizuku 未运行", "已安装，但服务尚未启动", StatusWarning)
-        AppViewModel.ShizukuState.NO_PERMISSION -> Status("需要 Shizuku 授权", "授权后才能管理 mihomo", StatusWarning)
-        AppViewModel.ShizukuState.READY -> Status(
+private fun StatusCard(vm: AppViewModel) {
+    val info = when (vm.shizukuState) {
+        AppViewModel.ShizukuState.NOT_INSTALLED -> StatusInfo(
+            "Shizuku 未安装", "请在手机端安装并启动 Shizuku", StatusWarning, null
+        )
+        AppViewModel.ShizukuState.NOT_RUNNING -> StatusInfo(
+            "Shizuku 未运行", "已安装,请在手机端启动 Shizuku 服务", StatusWarning, null
+        )
+        AppViewModel.ShizukuState.NO_PERMISSION -> StatusInfo(
+            "需要 Shizuku 授权", "授权后才能管理 mihomo", StatusWarning,
+            ActionInfo("授权 Shizuku", vm::requestPermission)
+        )
+        AppViewModel.ShizukuState.READY -> StatusInfo(
             if (vm.isRunning) "代理正在运行" else "Shizuku 已就绪",
             if (vm.isBound) "UserService 已连接" else "反射通道可用",
-            if (vm.isRunning) StatusGood else MaterialTheme.colorScheme.primary
+            if (vm.isRunning) StatusGood else MaterialTheme.colorScheme.primary,
+            if (vm.shizukuState == AppViewModel.ShizukuState.READY && !vm.isBound)
+                ActionInfo("连接 UserService", vm::reconnect) else null
         )
     }
-    InfoPanel(status.title, status.detail, status.color)
-    when {
-        vm.shizukuState == AppViewModel.ShizukuState.NO_PERMISSION -> {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text(info.title, color = info.color, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                info.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+            info.action?.let { action ->
+                Spacer(Modifier.height(10.dp))
+                FilledTonalButton(
+                    onClick = action.onClick,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) { Text(action.label, style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+    }
+}
+
+/**
+ * 主操作按钮:启动 / 停止代理。
+ * 60dp 大尺寸 + titleLarge 字号,显眼防误触。
+ */
+@Composable
+private fun PrimaryActionCard(vm: AppViewModel) {
+    Button(
+        onClick = { if (vm.isRunning) vm.stopProxy() else vm.startProxy() },
+        enabled = !vm.loading,
+        modifier = Modifier.fillMaxWidth().height(60.dp)
+    ) {
+        Text(
+            if (vm.loading) "正在处理…" else if (vm.isRunning) "停止代理" else "启动代理",
+            style = MaterialTheme.typography.titleLarge
+        )
+    }
+}
+
+/**
+ * 运行中信息卡:显示代理端口 + 选择节点按钮。
+ * 用 tertiaryContainer 背景(绿系)与主操作区分。
+ */
+@Composable
+private fun RunningInfoCard(vm: AppViewModel) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text(
+                "代理已启用",
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "HTTP 7890 · SOCKS5 7891",
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(10.dp))
             FilledTonalButton(
-                onClick = vm::requestPermission,
-                modifier = Modifier.fillMaxWidth().height(46.dp).padding(top = 4.dp)
-            ) { Text("授权 Shizuku", style = MaterialTheme.typography.bodyMedium) }
-        }
-        vm.shizukuState == AppViewModel.ShizukuState.READY && !vm.isBound -> {
-            OutlinedButton(
-                onClick = vm::reconnect,
-                modifier = Modifier.fillMaxWidth().height(46.dp).padding(top = 4.dp)
-            ) { Text("连接 UserService", style = MaterialTheme.typography.bodyMedium) }
+                onClick = vm::loadGroups,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("选择节点", style = MaterialTheme.typography.bodyMedium) }
         }
     }
 }
 
-private data class Status(val title: String, val detail: String, val color: Color)
-
+/**
+ * 订阅输入卡:输入框 + 粘贴 / 保存 / 清空。
+ * 关键修复:每个按钮 48dp + Column 间距统一管理,绝不重叠。
+ * 粘贴独占一行(高频操作),保存/清空 2 列(对等操作)。
+ */
 @Composable
-private fun PreparationPanel(vm: AppViewModel) {
-    val text = if (vm.shizukuState == AppViewModel.ShizukuState.NOT_RUNNING) {
-        "请在手机端启动 Shizuku 服务后，返回此处刷新状态。"
-    } else {
-        "安装 Shizuku、启动服务，并为本应用授予权限。"
-    }
-    InfoPanel("使用前准备", text, MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun SubscriptionPanel(vm: AppViewModel, context: Context) {
-    SectionLabel("订阅")
-    // Card 不再显式传 colors,默认就从 MaterialTheme.colorScheme.surfaceContainer 取色。
-    // 选中态用 secondaryContainer 显式覆盖(语义化:选中 = 次色容器)。
+private fun SubscriptionCard(vm: AppViewModel, context: Context) {
     Card(
         onClick = {},
         modifier = Modifier.fillMaxWidth(),
@@ -179,114 +285,227 @@ private fun SubscriptionPanel(vm: AppViewModel, context: Context) {
             Text(
                 "订阅链接",
                 color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.titleSmall
             )
             Spacer(Modifier.height(8.dp))
             UrlInput(vm.subscriptionUrl, { vm.subscriptionUrl = it }, "粘贴或输入 Clash 订阅链接")
             Spacer(Modifier.height(10.dp))
-            // One action per line on a round watch: never compress three touch targets.
+            // 粘贴独占一行(高频操作,圆形小屏不挤压)
             FilledTonalButton(
                 onClick = { vm.setSubscriptionFromClipboard(readClipboard(context)) },
-                modifier = Modifier.fillMaxWidth().height(42.dp)
+                modifier = Modifier.fillMaxWidth().height(48.dp)
             ) { Text("从剪贴板粘贴", style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(6.dp))
+            // 保存 / 清空 对等操作 → 2 列
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
                     onClick = vm::saveCurrentSubscription,
-                    modifier = Modifier.weight(1f).height(42.dp)
+                    modifier = Modifier.weight(1f).height(48.dp)
                 ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
                 OutlinedButton(
                     onClick = { vm.subscriptionUrl = "" },
-                    modifier = Modifier.weight(1f).height(42.dp)
+                    modifier = Modifier.weight(1f).height(48.dp)
                 ) { Text("清空", style = MaterialTheme.typography.bodySmall) }
             }
         }
     }
+}
 
-    if (vm.savedSubscriptions.isNotEmpty()) {
-        SectionLabel("已保存订阅")
-        vm.savedSubscriptions.forEach { sub ->
-            val selected = sub.url == vm.subscriptionUrl.trim()
-            Card(
-                onClick = { vm.loadSubscription(sub) },
-                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
-                                     else MaterialTheme.colorScheme.surfaceContainer
+/**
+ * 已保存订阅卡片:当前选中明显高亮(secondaryContainer + primary 文字)。
+ * 内含删除按钮(独立行,避免误触)。
+ */
+@Composable
+private fun SavedSubscriptionCard(vm: AppViewModel, sub: SavedSubscription) {
+    val selected = sub.url == vm.subscriptionUrl.trim()
+    Card(
+        onClick = { vm.loadSubscription(sub) },
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
+                             else MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                sub.name,
+                color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (selected) "● 当前使用 · 点按重新载入" else "点按载入此订阅",
+                color = if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = { vm.deleteSubscription(sub.name) },
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) { Text("删除此订阅", style = MaterialTheme.typography.labelSmall) }
+        }
+    }
+}
+
+/**
+ * 诊断卡:默认收起,展开后含诊断信息 + 刷新 + 测试反射按钮。
+ *
+ * 关键 bug 修复(原 #63 重叠 bug 根因):
+ * 原版 DiagnosticPanel 直接在 @Composable 函数顶层 emit 多个元素
+ * (SectionLabel + OutlinedButton + Spacer + InfoPanel + FilledTonalButton + OutlinedButton),
+ * 在 ScalingLazyColumn 单 item 内会层叠渲染导致文字重叠。
+ * 现版用 Column 包裹全部子元素,通过 Arrangement.spacedBy / Spacer 垂直堆叠,
+ * 绝不再出现重叠。
+ */
+@Composable
+private fun DiagnosticCard(vm: AppViewModel) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text(
+                "诊断与工具",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = vm::toggleDiagnostic,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text(if (vm.showDiagnostic) "收起诊断" else "展开诊断", style = MaterialTheme.typography.bodySmall) }
+
+            if (vm.showDiagnostic) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "诊断信息",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall
                 )
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        sub.name,
-                        color = if (selected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        if (selected) "当前使用 · 点按可重新载入" else "点按载入此订阅",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    Spacer(Modifier.height(7.dp))
-                    OutlinedButton(
-                        onClick = { vm.deleteSubscription(sub.name) },
-                        modifier = Modifier.fillMaxWidth().height(38.dp)
-                    ) { Text("删除此订阅", style = MaterialTheme.typography.labelSmall) }
-                }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    vm.diagnostic.ifBlank { "点击下方按钮刷新以获取状态" },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 10,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = vm::refreshDiagnostic,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) { Text("刷新诊断状态", style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = vm::testReflection,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) { Text("测试反射通道", style = MaterialTheme.typography.bodySmall) }
             }
         }
     }
 }
 
+/**
+ * 准备引导卡:Shizuku 未就绪时显示。
+ * 含"刷新状态"按钮(让用户在手机端启动 Shizuku 后回来刷新)。
+ */
 @Composable
-private fun PrimaryProxyAction(vm: AppViewModel) {
-    Spacer(Modifier.height(8.dp))
-    Button(
-        onClick = { if (vm.isRunning) vm.stopProxy() else vm.startProxy() },
-        enabled = !vm.loading,
-        modifier = Modifier.fillMaxWidth().height(54.dp)
-    ) {
-        Text(
-            if (vm.loading) "正在处理…" else if (vm.isRunning) "停止代理" else "启动代理",
-            style = MaterialTheme.typography.titleMedium
+private fun PreparationCard(vm: AppViewModel) {
+    val text = if (vm.shizukuState == AppViewModel.ShizukuState.NOT_RUNNING) {
+        "请在手机端启动 Shizuku 服务后,返回此处刷新状态。"
+    } else {
+        "安装 Shizuku、启动服务,并为本应用授予权限。"
+    }
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text("使用前准备", color = StatusWarning, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = vm::refreshShizuku,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("刷新状态", style = MaterialTheme.typography.bodySmall) }
+        }
     }
 }
 
+/**
+ * 错误卡:独立 item,用 errorContainer 背景与正常状态区分。
+ * 含关闭按钮。
+ */
 @Composable
-private fun RunningPanel(vm: AppViewModel) {
-    InfoPanel("系统代理已启用", "HTTP 7890 · SOCKS5 7891", StatusGood)
-    FilledTonalButton(
-        onClick = vm::loadGroups,
-        modifier = Modifier.fillMaxWidth().height(46.dp).padding(top = 4.dp)
-    ) { Text("选择节点", style = MaterialTheme.typography.bodyMedium) }
-}
-
-@Composable
-private fun DiagnosticPanel(vm: AppViewModel) {
-    SectionLabel("工具与诊断")
-    OutlinedButton(
-        onClick = vm::toggleDiagnostic,
-        modifier = Modifier.fillMaxWidth().height(44.dp)
-    ) { Text(if (vm.showDiagnostic) "收起诊断" else "展开诊断", style = MaterialTheme.typography.bodySmall) }
-
-    if (vm.showDiagnostic) {
-        Spacer(Modifier.height(6.dp))
-        InfoPanel("诊断信息", vm.diagnostic.ifBlank { "点击刷新以获取状态" }, MaterialTheme.colorScheme.onSurfaceVariant)
-        FilledTonalButton(
-            onClick = vm::refreshDiagnostic,
-            modifier = Modifier.fillMaxWidth().height(42.dp)
-        ) { Text("刷新诊断状态", style = MaterialTheme.typography.bodySmall) }
-        Spacer(Modifier.height(6.dp))
-        OutlinedButton(
-            onClick = vm::testReflection,
-            modifier = Modifier.fillMaxWidth().height(42.dp)
-        ) { Text("测试反射通道", style = MaterialTheme.typography.bodySmall) }
+private fun ErrorCard(message: String, onClose: () -> Unit) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text("错误", color = StatusBad, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                message,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 10,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onClose,
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) { Text("关闭提示", style = MaterialTheme.typography.labelSmall) }
+        }
     }
 }
+
+/**
+ * 日志卡:独立 item,与诊断面板完全分离(避免主页面拥挤)。
+ * 截断 8 行,避免长日志占用过多滚动空间。
+ */
+@Composable
+private fun LogCard(log: String) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text("运行日志", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                log,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 8,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 节点选择页
+// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun NodesScreen(vm: AppViewModel) {
@@ -295,47 +514,176 @@ private fun NodesScreen(vm: AppViewModel) {
         state = listState,
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        contentPadding = PaddingValues(horizontal = 28.dp, vertical = 38.dp)
+        contentPadding = PaddingValues(horizontal = 22.dp, vertical = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        item { ScreenTitle("节点选择", "点按节点即可切换") }
+        item { NodeHeaderCard(vm) }
         item {
-            OutlinedButton(onClick = vm::backToMain, modifier = Modifier.fillMaxWidth().height(44.dp)) {
-                Text("返回主页", style = MaterialTheme.typography.bodySmall)
-            }
+            OutlinedButton(
+                onClick = vm::backToMain,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("返回主页", style = MaterialTheme.typography.bodySmall) }
         }
-        item {
-            Spacer(Modifier.height(8.dp))
-            FilledTonalButton(onClick = vm::updateSubscription, enabled = !vm.updating, modifier = Modifier.fillMaxWidth().height(44.dp)) {
-                Text(if (vm.updating) "正在更新订阅…" else "更新订阅", style = MaterialTheme.typography.bodySmall)
-            }
-            Spacer(Modifier.height(6.dp))
-            FilledTonalButton(onClick = vm::testAllDelays, enabled = !vm.testingDelays, modifier = Modifier.fillMaxWidth().height(44.dp)) {
-                Text(if (vm.testingDelays) "正在测速…" else "测试全部延迟", style = MaterialTheme.typography.bodySmall)
-            }
-            Spacer(Modifier.height(6.dp))
-            OutlinedButton(onClick = vm::toggleSort, modifier = Modifier.fillMaxWidth().height(42.dp)) {
-                Text(if (vm.sortByDelay) "当前：按延迟排序" else "当前：原始顺序", style = MaterialTheme.typography.labelSmall)
-            }
+        // 操作区:更新订阅 / 测速 / 排序,统一在一张卡片内(Column 包裹,绝不重叠)
+        item { NodesActionCard(vm) }
+
+        if (vm.groups.isEmpty()) {
+            item { EmptyNodesCard() }
         }
-        if (vm.groups.isEmpty()) item { InfoPanel("节点", "暂无 Selector 分组，或仍在加载。", MaterialTheme.colorScheme.onSurfaceVariant) }
-        vm.groups.forEach { group ->
-            item { SectionLabel(group.name) }
-            item { InfoPanel("当前节点", group.now ?: "未选择", StatusGood) }
-            val pairs = vm.sortedNodes(group).chunked(2)
-            items(pairs) { pair ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    pair.forEach { (node, delay) ->
-                        NodeTile(node, delay, node == group.now, Modifier.weight(1f)) { vm.selectNode(group.name, node) }
-                    }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
-                }
-            }
+        // 每个 Selector 分组独立一张卡片
+        items(vm.groups) { group ->
+            SelectorGroupCard(vm, group)
         }
     }
 }
 
 @Composable
-private fun NodeTile(name: String, delay: Int?, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun NodeHeaderCard(vm: AppViewModel) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+        )
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "节点选择",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.titleLarge
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (vm.testingDelays) "正在测速中…" else "点按节点即可切换",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+/**
+ * 节点页操作卡:更新订阅 / 测速 / 排序。
+ * 关键 bug 修复:原版同样存在 DiagnosticPanel 的"裸 emit 多元素"重叠问题,
+ * 现版用 Column 包裹,统一间距管理。
+ */
+@Composable
+private fun NodesActionCard(vm: AppViewModel) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            FilledTonalButton(
+                onClick = vm::updateSubscription,
+                enabled = !vm.updating,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text(if (vm.updating) "正在更新订阅…" else "更新订阅", style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(6.dp))
+            FilledTonalButton(
+                onClick = vm::testAllDelays,
+                enabled = !vm.testingDelays,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text(if (vm.testingDelays) "正在测速…" else "测试全部延迟", style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(6.dp))
+            OutlinedButton(
+                onClick = vm::toggleSort,
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) { Text(if (vm.sortByDelay) "当前:按延迟排序" else "当前:原始顺序", style = MaterialTheme.typography.labelSmall) }
+        }
+    }
+}
+
+@Composable
+private fun EmptyNodesCard() {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            Text("暂无节点", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "订阅未加载或仍在解析中。点上方「更新订阅」重试。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+/**
+ * Selector 分组卡:分组名 + 当前节点(高亮)+ 节点网格(2 列)。
+ * 整张卡片用 Column 包裹,内部节点网格用 Row + Spacer。
+ */
+@Composable
+private fun SelectorGroupCard(vm: AppViewModel, group: MihomoApi.Proxy) {
+    Card(
+        onClick = {},
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Column(Modifier.padding(13.dp)) {
+            // 分组名(琥珀金标题色)
+            Text(
+                group.name,
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(3.dp))
+            // 当前节点(成功色 + ● 标记,更醒目)
+            Text(
+                "● 当前:${group.now ?: "未选择"}",
+                color = StatusGood,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(8.dp))
+            // 节点网格:2 列,每行用 Row + Spacer 包裹
+            val pairs = vm.sortedNodes(group).chunked(2)
+            pairs.forEachIndexed { index, pair ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    pair.forEach { (node, delay) ->
+                        NodeTile(node, delay, node == group.now, Modifier.weight(1f)) {
+                            vm.selectNode(group.name, node)
+                        }
+                    }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+                if (index < pairs.size - 1) Spacer(Modifier.height(6.dp))
+            }
+        }
+    }
+}
+
+/**
+ * 节点单元:延迟颜色 + 文本同时表达。
+ *  - 0–300ms 绿(快)
+ *  - 301–800ms 橙(中)
+ *  - 其他 红(慢/失败/未测)
+ */
+@Composable
+private fun NodeTile(
+    name: String,
+    delay: Int?,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
     val (label, color) = when (delay) {
         null -> "未测速" to MaterialTheme.colorScheme.onSurfaceVariant
         -1 -> "不可用" to StatusBad
@@ -345,14 +693,14 @@ private fun NodeTile(name: String, delay: Int?, selected: Boolean, modifier: Mod
     }
     Card(
         onClick = onClick,
-        modifier = modifier.padding(vertical = 4.dp),
+        modifier = modifier,
         colors = CardDefaults.cardColors(
             containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
-                             else MaterialTheme.colorScheme.surfaceContainer
+                             else MaterialTheme.colorScheme.surfaceContainerHigh
         )
     ) {
         Column(
-            modifier = Modifier.padding(9.dp).heightIn(min = 74.dp),
+            modifier = Modifier.padding(8.dp).heightIn(min = 70.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
@@ -363,15 +711,20 @@ private fun NodeTile(name: String, delay: Int?, selected: Boolean, modifier: Mod
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
+            Spacer(Modifier.height(4.dp))
+            // 延迟颜色 + 文本同时表达:选中态加 ● 标记
             Text(
-                if (selected) "已选 · $label" else label,
+                if (selected) "● $label" else label,
                 color = color,
-                // 节点延迟小标:用 bodyExtraSmall(9sp)保持紧凑,圆形小屏需要。
                 style = MaterialTheme.typography.bodyExtraSmall
             )
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 保存订阅对话框
+// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun SaveDialog(vm: AppViewModel) {
@@ -387,15 +740,25 @@ private fun SaveDialog(vm: AppViewModel) {
                     textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(12.dp))
-                UrlInput(vm.editingSubName, vm::updateEditingName, "例如：主线路", true)
+                UrlInput(vm.editingSubName, vm::updateEditingName, "例如:主线路", true)
                 Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = vm::confirmSaveSubscription, modifier = Modifier.fillMaxWidth().height(43.dp)) { Text("保存", style = MaterialTheme.typography.bodySmall) }
+                FilledTonalButton(
+                    onClick = vm::confirmSaveSubscription,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
                 Spacer(Modifier.height(6.dp))
-                OutlinedButton(onClick = vm::cancelSaveDialog, modifier = Modifier.fillMaxWidth().height(40.dp)) { Text("取消", style = MaterialTheme.typography.bodySmall) }
+                OutlinedButton(
+                    onClick = vm::cancelSaveDialog,
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) { Text("取消", style = MaterialTheme.typography.bodySmall) }
             }
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 共用组件
+// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun UrlInput(value: String, onValueChange: (String) -> Unit, hint: String, singleLine: Boolean = false) {
@@ -426,33 +789,12 @@ private fun UrlInput(value: String, onValueChange: (String) -> Unit, hint: Strin
 }
 
 @Composable
-private fun InfoPanel(title: String, body: String, color: Color, action: (() -> Unit)? = null) {
-    Card(onClick = {}, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Column(Modifier.padding(13.dp)) {
-            Text(title, color = color, style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(3.dp))
-            Text(
-                body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 7,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (action != null) {
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = action, modifier = Modifier.fillMaxWidth().height(38.dp)) { Text("关闭提示", style = MaterialTheme.typography.labelSmall) }
-            }
-        }
-    }
-}
-
-@Composable
 private fun SectionLabel(text: String) {
     Text(
         text,
         color = MaterialTheme.colorScheme.secondary,
         style = MaterialTheme.typography.bodySmall,
-        modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
         textAlign = TextAlign.Start,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis

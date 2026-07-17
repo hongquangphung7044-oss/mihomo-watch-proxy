@@ -11,17 +11,16 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Typography
 
 /**
- * Wear Material 3 主题。
+ * Wear Material 3 主题 —— Mihomo 手表代理。
  *
- * 设计原则:
+ * 设计原则(彻底重构版):
  *  - 单一深色 ColorScheme(Wear OS 屏幕小 + OLED 省电,几乎只用暗色)
- *  - 颜色按语义映射到 M3 ColorScheme 槽位,UI 全部走 [MaterialTheme.colorScheme]
- *  - Typography 复用现有字号(10–21sp,适配圆形小屏),不做激进放大
- *  - 状态指示色(Good/Warning/Bad)保留为本地语义色,不并入 ColorScheme,
+ *  - 主色用琥珀金 #E8B547,延续应用图标辨识度
+ *  - 背景:近黑蓝 #0A1626,避免纯黑大色块带来的"死气"
+ *  - Surface 三档递进,清晰表达层级(低 / 中 / 高)
+ *  - 状态色(Good/Warning/Bad)保留为顶层语义色,不并入 ColorScheme,
  *    因为它们对应"成功/警告/错误"三种业务状态,跨槽位复用会混淆语义
- *
- * 视觉标识延续前一版本的蓝青色调(背景深蓝 + 主色青 + 紫调次色),
- * 只是从硬编码颜色彻底迁移到 M3 主题系统,组件默认样式即可统一。
+ *  - Typography 字号沿用旧版实测值(10–21sp),适配圆形小屏
  *
  * 注意:Wear Compose Material 3 的 [ColorScheme] 与标准 [androidx.compose.material3]
  * 不同 —— 没有 `surface` / `surfaceVariant` / `surfaceContainerHighest` / `scrim`,
@@ -31,32 +30,49 @@ import androidx.wear.compose.material3.Typography
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Color tokens — 直接对应旧版硬编码色板,语义化重排到 M3 槽位
+// Color tokens —— 琥珀金主色 + 近黑蓝背景 + 三档 surface 层级
 // ─────────────────────────────────────────────────────────────────────────────
-private val MihomoBackground = Color(0xFF071427)        // 旧 AppBackground
-private val MihomoSurface = Color(0xFF102842)            // 旧 Panel(默认 surface)
-private val MihomoSurfaceHigh = Color(0xFF163A5D)       // 旧 PanelRaised(抬高态)
-private val MihomoSecondaryContainer = Color(0xFF174863) // 旧 PanelSelected(选中态)
-private val MihomoPrimary = Color(0xFF55D8FF)           // 旧 Accent(青)
-private val MihomoPrimaryDim = Color(0xFF1A6B85)        // OLED 暗化态(青)
-private val MihomoOnPrimary = Color(0xFF002B3B)
-private val MihomoPrimaryContainer = Color(0xFF1E5C82)
-private val MihomoOnPrimaryContainer = Color(0xFFCDEBFF)
-private val MihomoSecondary = Color(0xFFB5A2FF)         // 旧 AccentSoft(紫)
-private val MihomoSecondaryDim = Color(0xFF3D2F66)     // OLED 暗化态(紫)
-private val MihomoOnSecondary = Color(0xFF1B1240)
-private val MihomoOnSecondaryContainer = Color(0xFFE6DEFF)
-private val MihomoTertiary = Color(0xFF67E6AC)          // 旧 Good(运行状态)
-private val MihomoTertiaryDim = Color(0xFF1A4D2C)      // OLED 暗化态(绿)
+
+// 背景:近黑蓝(略提亮,避免纯黑大块)
+private val MihomoBackground = Color(0xFF0A1626)
+
+// Surface 三档:层级递进,低/中/高
+private val MihomoSurfaceLow = Color(0xFF102842)      // 默认卡片背景
+private val MihomoSurface = Color(0xFF143152)         // 中层卡片
+private val MihomoSurfaceHigh = Color(0xFF1C3F66)     // 抬高层(输入框、内嵌容器)
+
+// 主色:琥珀金(延续图标辨识度,深色背景上对比强烈)
+private val MihomoPrimary = Color(0xFFE8B547)
+private val MihomoPrimaryDim = Color(0xFF7A5A1A)      // OLED 暗化态
+private val MihomoOnPrimary = Color(0xFF1A1000)       // 深棕(在琥珀金上)
+private val MihomoPrimaryContainer = Color(0xFF4A3712) // 暗琥珀容器
+private val MihomoOnPrimaryContainer = Color(0xFFFFE9B0) // 浅琥珀(在暗容器上)
+
+// 次色:靛蓝(与主色互补,用于"选中"等次级语义)
+private val MihomoSecondary = Color(0xFF8AB4F8)
+private val MihomoSecondaryDim = Color(0xFF2A3F66)
+private val MihomoOnSecondary = Color(0xFF001A3D)
+private val MihomoSecondaryContainer = Color(0xFF1F3A5E)  // 选中卡片背景(深靛)
+private val MihomoOnSecondaryContainer = Color(0xFFD7E3FF)
+
+// 三色:翠绿(成功状态对应的色系)
+private val MihomoTertiary = Color(0xFF67E6AC)
+private val MihomoTertiaryDim = Color(0xFF1A4D2C)
 private val MihomoOnTertiary = Color(0xFF003822)
 private val MihomoTertiaryContainer = Color(0xFF1F4D34)
 private val MihomoOnTertiaryContainer = Color(0xFFB4F4D3)
-private val MihomoOnSurface = Color(0xFFF2F6FC)         // 旧 OnSurface
-private val MihomoOnSurfaceVariant = Color(0xFFB8C7DB)  // 旧 Muted
+
+// 文字色:onSurface 主文 / onSurfaceVariant 次文
+private val MihomoOnSurface = Color(0xFFF2F6FC)
+private val MihomoOnSurfaceVariant = Color(0xFFB8C7DB)
+
+// 描边
 private val MihomoOutline = Color(0xFF5A6F88)
 private val MihomoOutlineVariant = Color(0xFF2C3E55)
-private val MihomoError = Color(0xFFFF8492)             // 旧 Bad
-private val MihomoErrorDim = Color(0xFF5C1A24)         // OLED 暗化态(红)
+
+// 错误色:红
+private val MihomoError = Color(0xFFFF7A85)
+private val MihomoErrorDim = Color(0xFF5C1A24)
 private val MihomoOnError = Color(0xFF5C0014)
 private val MihomoErrorContainer = Color(0xFF5C1A24)
 private val MihomoOnErrorContainer = Color(0xFFFFDDE0)
@@ -64,13 +80,13 @@ private val MihomoOnErrorContainer = Color(0xFFFFDDE0)
 /**
  * 业务状态指示色。
  *
- * Good=运行正常 / Warning=需注意 / Bad=错误。
+ * Good=运行正常(绿) / Warning=需注意(橙) / Bad=错误(红)。
  * 不并入 [MaterialTheme.colorScheme],因为它们是业务状态而非 UI 主题色,
  * 跨 surface 复用会混淆语义(例如 Bad 不一定等于 error container)。
  */
 val StatusGood = Color(0xFF67E6AC)
-val StatusWarning = Color(0xFFFFCB66)
-val StatusBad = Color(0xFFFF8492)
+val StatusWarning = Color(0xFFFFB547)
+val StatusBad = Color(0xFFFF7A85)
 
 /**
  * 单一深色 ColorScheme。
@@ -78,8 +94,6 @@ val StatusBad = Color(0xFFFF8492)
  * Wear OS 默认就是深色场景,不需要 lightColorScheme 分支。
  * Wear M3 没有 `darkColorScheme()` 工厂,直接构造 [ColorScheme],
  * 必须传齐 29 个颜色槽位(primaryDim/secondaryDim/tertiaryDim/errorDim 是 Wear 专属)。
- *
- * 调用方拿 [MaterialTheme.colorScheme] 即可,无需关心具体色值。
  */
 private val MihomoColorScheme = ColorScheme(
     primary = MihomoPrimary,
@@ -97,7 +111,7 @@ private val MihomoColorScheme = ColorScheme(
     tertiaryContainer = MihomoTertiaryContainer,
     onTertiary = MihomoOnTertiary,
     onTertiaryContainer = MihomoOnTertiaryContainer,
-    surfaceContainerLow = MihomoSurface,
+    surfaceContainerLow = MihomoSurfaceLow,
     surfaceContainer = MihomoSurface,
     surfaceContainerHigh = MihomoSurfaceHigh,
     onSurface = MihomoOnSurface,
@@ -114,7 +128,7 @@ private val MihomoColorScheme = ColorScheme(
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Typography — 保留旧版字号(适配圆形小屏),只做语义化映射
+// Typography —— 保留旧版字号(适配圆形小屏),只做语义化映射
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -125,8 +139,7 @@ private val MihomoColorScheme = ColorScheme(
  * bodyLarge/Medium/Small/ExtraSmall、labelLarge/Medium/Small、
  * 以及 Wear 专属的 numeralXxx + arcXxx(此处保留默认)。
  *
- * 直接覆盖 Wear M3 默认字号(默认偏大,圆形表盘上会溢出),
- * 用旧版实测过的尺寸:
+ * 字号沿用旧版实测值(10–21sp),适配圆形小屏:
  *  - displaySmall = 21sp  — 大标题(如 "Mihomo")
  *  - titleLarge   = 17sp  — 对话框标题
  *  - titleMedium  = 15sp  — 主操作按钮文字
@@ -165,7 +178,6 @@ private val MihomoTypography = Typography(
 @Composable
 fun MihomoTheme(content: @Composable () -> Unit) {
     // isSystemInDarkTheme() 在 Wear OS 上恒为 true,这里仅作显式语义标记。
-    // 即便未来想加 lightColorScheme 分支,也只需在此处扩展。
     @Suppress("UNUSED_VARIABLE")
     val darkTheme = isSystemInDarkTheme()
     MaterialTheme(
