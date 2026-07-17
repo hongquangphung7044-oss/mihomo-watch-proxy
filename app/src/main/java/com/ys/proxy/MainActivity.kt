@@ -46,6 +46,7 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.FilledTonalButton
@@ -282,12 +283,19 @@ private fun RunningInfoCard(vm: AppViewModel) {
  * 订阅输入卡:输入框 + 粘贴 / 保存 / 清空。
  * 关键修复:每个按钮 48dp + Column 间距统一管理,绝不重叠。
  * 粘贴独占一行(高频操作),保存/清空 2 列(对等操作)。
+ *
+ * 卡片背景用 surfaceContainerLow(比 background 略亮一档),
+ * 让 FilledTonalButton(secondaryContainer)/OutlinedButton 与卡片有对比,
+ * 避免动态颜色下按钮容器色与卡片背景过于接近导致"看不到按钮框"。
  */
 @Composable
 private fun SubscriptionCard(vm: AppViewModel, context: Context) {
     Card(
         onClick = {},
         modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
     ) {
         Column(Modifier.padding(13.dp)) {
             Text(
@@ -299,21 +307,51 @@ private fun SubscriptionCard(vm: AppViewModel, context: Context) {
             UrlInput(vm.subscriptionUrl, { vm.subscriptionUrl = it }, "粘贴或输入 Clash 订阅链接")
             Spacer(Modifier.height(10.dp))
             // 粘贴独占一行(高频操作,圆形小屏不挤压)
+            // 显式 filledTonalButtonColors:用 primary 容器色,确保与卡片背景对比
             FilledTonalButton(
                 onClick = { vm.setSubscriptionFromClipboard(readClipboard(context)) },
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) { Text("从剪贴板粘贴", style = MaterialTheme.typography.bodySmall) }
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            ) {
+                Text(
+                    "从剪贴板粘贴",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Spacer(Modifier.height(6.dp))
             // 保存 / 清空 对等操作 → 2 列
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(
                     onClick = vm::saveCurrentSubscription,
-                    modifier = Modifier.weight(1f).height(48.dp)
-                ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                ) {
+                    Text(
+                        "保存",
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 OutlinedButton(
                     onClick = { vm.subscriptionUrl = "" },
                     modifier = Modifier.weight(1f).height(48.dp)
-                ) { Text("清空", style = MaterialTheme.typography.bodySmall) }
+                ) {
+                    Text(
+                        "清空",
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
     }
@@ -554,11 +592,11 @@ private fun NodesScreen(vm: AppViewModel) {
         // 操作区:更新订阅 / 测速 / 排序,统一在一张卡片内(Column 包裹,绝不重叠)
         item { NodesActionCard(vm) }
 
-        if (vm.groups.isEmpty()) {
+        if (vm.filteredGroups.isEmpty()) {
             item { EmptyNodesCard() }
         }
-        // 每个 Selector 分组独立一张卡片
-        items(vm.groups) { group ->
+        // 每个 Selector 分组独立一张卡片(已过滤引用型分组,只展示含落地节点的)
+        items(vm.filteredGroups) { group ->
             SelectorGroupCard(vm, group)
         }
     }
@@ -881,6 +919,7 @@ private fun RenameDialog(vm: AppViewModel) {
 private fun UrlInput(value: String, onValueChange: (String) -> Unit, hint: String, singleLine: Boolean = false) {
     Box(
         Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(horizontal = 11.dp, vertical = 10.dp)
     ) {

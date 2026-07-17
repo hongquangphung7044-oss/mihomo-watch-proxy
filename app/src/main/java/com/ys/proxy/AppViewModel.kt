@@ -72,6 +72,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var groups by mutableStateOf<List<MihomoApi.Proxy>>(emptyList())
         private set
+
+    /**
+     * 过滤后的分组列表(只展示含落地节点的分组,过滤引用型分组)。
+     *
+     * 背景:机场订阅的 proxies 通常包含:
+     *  - PROXY / 🚀 节点选择:all 是落地节点列表(SS/VMess/Trojan...),用户能挑
+     *  - YouTube / Apple / Google:all 里全是引用其他分组(如 ["PROXY"] 或 ["🚀 节点选择"]),
+     *    在手表上切这种分组没意义(只是改了分流路径,不是选落地节点)
+     *
+     * 过滤规则:一个分组是"落地节点分组" ⟺ all 里至少有一个元素不是其他 Proxy 的 name。
+     * 同时过滤掉 all.size == 1 且唯一元素是分组引用的(纯引用型)。
+     *
+     * 这样手表上只显示真正能挑落地节点的分组(通常就 1-2 个),体验更聚焦。
+     */
+    val filteredGroups: List<MihomoApi.Proxy>
+        get() {
+            if (groups.isEmpty()) return emptyList()
+            // 收集所有 Proxy 的 name(用于判断 all 元素是否为分组引用)
+            val groupNames = groups.map { it.name }.toHashSet()
+            return groups.filter { group ->
+                // 至少有一个 all 元素不是其他分组的 name → 是落地节点
+                group.all.any { it !in groupNames }
+            }
+        }
     var loading by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)

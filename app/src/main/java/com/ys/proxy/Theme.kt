@@ -1,23 +1,28 @@
 package com.ys.proxy
 
+import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.ColorScheme
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Typography
+import androidx.wear.compose.material3.dynamicColorScheme
 
 /**
  * Wear Material 3 主题 —— Mihomo 手表代理。
  *
- * 设计原则(彻底重构版):
- *  - 单一深色 ColorScheme(Wear OS 屏幕小 + OLED 省电,几乎只用暗色)
- *  - 主色用琥珀金 #E8B547,延续应用图标辨识度
- *  - 背景:近黑蓝 #0A1626,避免纯黑大色块带来的"死气"
- *  - Surface 三档递进,清晰表达层级(低 / 中 / 高)
+ * 设计原则(按用户反馈 v2 调整):
+ *  - 背景:纯黑 #000000(OLED 省电,用户明确不要蓝灰底)
+ *  - Android 12+(API 31+)用 [dynamicColorScheme] 跟随系统壁纸取色,
+ *    让卡片色与手表主题协调
+ *  - Android 12 以下:fallback 到自定义深色方案(仍以纯黑为底,
+ *    主色用中性偏白而非饱和色,避免突兀)
  *  - 状态色(Good/Warning/Bad)保留为顶层语义色,不并入 ColorScheme,
  *    因为它们对应"成功/警告/错误"三种业务状态,跨槽位复用会混淆语义
  *  - Typography 字号沿用旧版实测值(10–21sp),适配圆形小屏
@@ -27,55 +32,11 @@ import androidx.wear.compose.material3.Typography
  * 取而代之是三档 `surfaceContainerLow/Container/ContainerHigh` + Wear 专属的
  * `*Dim`(primaryDim/secondaryDim/tertiaryDim/errorDim,用于 OLED 省电的暗化态)。
  * 也没有 `darkColorScheme()` 工厂,必须直接构造 [ColorScheme]。
+ *
+ * 动态颜色:Wear M3 自带 [dynamicColorScheme] —— 注意它**不是 @Composable**,
+ * 需用 [remember] 包裹;且返回的是 Wear 专属 [ColorScheme](不是标准 M3 的)。
+ * Android 12+ 上调用它会从系统壁纸取色;< API 31 会 fallback 到中性色。
  */
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Color tokens —— 琥珀金主色 + 近黑蓝背景 + 三档 surface 层级
-// ─────────────────────────────────────────────────────────────────────────────
-
-// 背景:近黑蓝(略提亮,避免纯黑大块)
-private val MihomoBackground = Color(0xFF0A1626)
-
-// Surface 三档:层级递进,低/中/高
-private val MihomoSurfaceLow = Color(0xFF102842)      // 默认卡片背景
-private val MihomoSurface = Color(0xFF143152)         // 中层卡片
-private val MihomoSurfaceHigh = Color(0xFF1C3F66)     // 抬高层(输入框、内嵌容器)
-
-// 主色:琥珀金(延续图标辨识度,深色背景上对比强烈)
-private val MihomoPrimary = Color(0xFFE8B547)
-private val MihomoPrimaryDim = Color(0xFF7A5A1A)      // OLED 暗化态
-private val MihomoOnPrimary = Color(0xFF1A1000)       // 深棕(在琥珀金上)
-private val MihomoPrimaryContainer = Color(0xFF4A3712) // 暗琥珀容器
-private val MihomoOnPrimaryContainer = Color(0xFFFFE9B0) // 浅琥珀(在暗容器上)
-
-// 次色:靛蓝(与主色互补,用于"选中"等次级语义)
-private val MihomoSecondary = Color(0xFF8AB4F8)
-private val MihomoSecondaryDim = Color(0xFF2A3F66)
-private val MihomoOnSecondary = Color(0xFF001A3D)
-private val MihomoSecondaryContainer = Color(0xFF1F3A5E)  // 选中卡片背景(深靛)
-private val MihomoOnSecondaryContainer = Color(0xFFD7E3FF)
-
-// 三色:翠绿(成功状态对应的色系)
-private val MihomoTertiary = Color(0xFF67E6AC)
-private val MihomoTertiaryDim = Color(0xFF1A4D2C)
-private val MihomoOnTertiary = Color(0xFF003822)
-private val MihomoTertiaryContainer = Color(0xFF1F4D34)
-private val MihomoOnTertiaryContainer = Color(0xFFB4F4D3)
-
-// 文字色:onSurface 主文 / onSurfaceVariant 次文
-private val MihomoOnSurface = Color(0xFFF2F6FC)
-private val MihomoOnSurfaceVariant = Color(0xFFB8C7DB)
-
-// 描边
-private val MihomoOutline = Color(0xFF5A6F88)
-private val MihomoOutlineVariant = Color(0xFF2C3E55)
-
-// 错误色:红
-private val MihomoError = Color(0xFFFF7A85)
-private val MihomoErrorDim = Color(0xFF5C1A24)
-private val MihomoOnError = Color(0xFF5C0014)
-private val MihomoErrorContainer = Color(0xFF5C1A24)
-private val MihomoOnErrorContainer = Color(0xFFFFDDE0)
 
 /**
  * 业务状态指示色。
@@ -83,48 +44,55 @@ private val MihomoOnErrorContainer = Color(0xFFFFDDE0)
  * Good=运行正常(绿) / Warning=需注意(橙) / Bad=错误(红)。
  * 不并入 [MaterialTheme.colorScheme],因为它们是业务状态而非 UI 主题色,
  * 跨 surface 复用会混淆语义(例如 Bad 不一定等于 error container)。
+ *
+ * 这三种色为全局通用,无论主题是动态还是静态,都使用这套固定语义色,
+ * 保证"成功/警告/错误"在视觉上始终清晰可辨。
  */
 val StatusGood = Color(0xFF67E6AC)
 val StatusWarning = Color(0xFFFFB547)
 val StatusBad = Color(0xFFFF7A85)
 
 /**
- * 单一深色 ColorScheme。
+ * 静态深色 ColorScheme(用于 Android 12 以下,或动态取色失败时 fallback)。
  *
- * Wear OS 默认就是深色场景,不需要 lightColorScheme 分支。
- * Wear M3 没有 `darkColorScheme()` 工厂,直接构造 [ColorScheme],
- * 必须传齐 29 个颜色槽位(primaryDim/secondaryDim/tertiaryDim/errorDim 是 Wear 专属)。
+ * 设计目标:纯黑背景 + 中性偏白主色,不引入饱和的蓝灰/黄。
+ * - background = 纯黑 #000000
+ * - surface 三档:从纯黑略微提亮,营造层级感但不喧宾夺主
+ * - primary:浅灰白 #E0E0E0(中性,不饱和)—— 用于主操作文字、标题
+ * - secondary:中灰 #9E9E9E —— 选中容器、次级元素
+ * - tertiary:淡蓝灰 #B0BEC5 —— 三级元素
+ * - error:红 #FF7A85
  */
-private val MihomoColorScheme = ColorScheme(
-    primary = MihomoPrimary,
-    primaryDim = MihomoPrimaryDim,
-    primaryContainer = MihomoPrimaryContainer,
-    onPrimary = MihomoOnPrimary,
-    onPrimaryContainer = MihomoOnPrimaryContainer,
-    secondary = MihomoSecondary,
-    secondaryDim = MihomoSecondaryDim,
-    secondaryContainer = MihomoSecondaryContainer,
-    onSecondary = MihomoOnSecondary,
-    onSecondaryContainer = MihomoOnSecondaryContainer,
-    tertiary = MihomoTertiary,
-    tertiaryDim = MihomoTertiaryDim,
-    tertiaryContainer = MihomoTertiaryContainer,
-    onTertiary = MihomoOnTertiary,
-    onTertiaryContainer = MihomoOnTertiaryContainer,
-    surfaceContainerLow = MihomoSurfaceLow,
-    surfaceContainer = MihomoSurface,
-    surfaceContainerHigh = MihomoSurfaceHigh,
-    onSurface = MihomoOnSurface,
-    onSurfaceVariant = MihomoOnSurfaceVariant,
-    outline = MihomoOutline,
-    outlineVariant = MihomoOutlineVariant,
-    background = MihomoBackground,
-    onBackground = MihomoOnSurface,
-    error = MihomoError,
-    errorDim = MihomoErrorDim,
-    errorContainer = MihomoErrorContainer,
-    onError = MihomoOnError,
-    onErrorContainer = MihomoOnErrorContainer,
+private val FallbackColorScheme = ColorScheme(
+    primary = Color(0xFFE0E0E0),
+    primaryDim = Color(0xFF707070),
+    primaryContainer = Color(0xFF2A2A2A),
+    onPrimary = Color(0xFF000000),
+    onPrimaryContainer = Color(0xFFE0E0E0),
+    secondary = Color(0xFF9E9E9E),
+    secondaryDim = Color(0xFF4A4A4A),
+    secondaryContainer = Color(0xFF2A2A2A),
+    onSecondary = Color(0xFF000000),
+    onSecondaryContainer = Color(0xFFE0E0E0),
+    tertiary = Color(0xFFB0BEC5),
+    tertiaryDim = Color(0xFF3A4A50),
+    tertiaryContainer = Color(0xFF1F282C),
+    onTertiary = Color(0xFF000000),
+    onTertiaryContainer = Color(0xFFE0E0E0),
+    surfaceContainerLow = Color(0xFF1A1A1A),
+    surfaceContainer = Color(0xFF222222),
+    surfaceContainerHigh = Color(0xFF2C2C2C),
+    onSurface = Color(0xFFEEEEEE),
+    onSurfaceVariant = Color(0xFFB0B0B0),
+    outline = Color(0xFF6A6A6A),
+    outlineVariant = Color(0xFF3A3A3A),
+    background = Color(0xFF000000),
+    onBackground = Color(0xFFEEEEEE),
+    error = Color(0xFFFF7A85),
+    errorDim = Color(0xFF5C1A24),
+    errorContainer = Color(0xFF5C1A24),
+    onError = Color(0xFF000000),
+    onErrorContainer = Color(0xFFFFDDE0),
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,17 +139,32 @@ private val MihomoTypography = Typography(
 /**
  * 应用根主题。
  *
- * 强制走 [MihomoColorScheme](忽略系统 dark/light,Wear OS 上只支持暗色),
- * 这样所有 [androidx.wear.compose.material3] 组件的默认 colors 都从主题取,
- * 不需要在每个组件上手动传 [androidx.wear.compose.material3.CardDefaults.cardColors] 之类的参数。
+ * 取色策略(按用户要求"卡片根据系统取色,不要蓝灰+黄"):
+ *  - Android 12+(API 31+):用 [dynamicColorScheme] 跟随系统壁纸取色
+ *  - Android 12 以下:fallback 到 [FallbackColorScheme](纯黑 + 中性灰白)
+ *
+ * [isSystemInDarkTheme] 在 Wear OS 上恒为 true,这里仅作显式语义标记。
  */
 @Composable
 fun MihomoTheme(content: @Composable () -> Unit) {
-    // isSystemInDarkTheme() 在 Wear OS 上恒为 true,这里仅作显式语义标记。
+    val context = LocalContext.current
     @Suppress("UNUSED_VARIABLE")
     val darkTheme = isSystemInDarkTheme()
+
+    // Android 12+ 用系统动态颜色;低版本 fallback 到中性深色方案。
+    // 注意:dynamicColorScheme 不是 @Composable,需 remember 包裹。
+    val colorScheme = remember(context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // dynamicColorScheme 在 Android 12+ 会从系统壁纸取色,
+            // < 31 时内部会 fallback 到中性色(保险起见我们额外判一次)
+            dynamicColorScheme(context)
+        } else {
+            FallbackColorScheme
+        }
+    }
+
     MaterialTheme(
-        colorScheme = MihomoColorScheme,
+        colorScheme = colorScheme,
         typography = MihomoTypography,
         content = content
     )
