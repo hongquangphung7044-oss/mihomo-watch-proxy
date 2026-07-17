@@ -1,2 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@mipmap/ic_launcher" android:left="18dp" android:top="18dp" android:right="18dp" android:bottom="18dp" /></layer-list>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Keep the supplied artwork inside Wear OS adaptive-icon safe zone. -->
+    <item
+        android:drawable="@drawable/ic_launcher_art"
+        android:left="18dp"
+        android:top="18dp"
+        android:right="18dp"
+        android:bottom="18dp" />
+</layer-list>
