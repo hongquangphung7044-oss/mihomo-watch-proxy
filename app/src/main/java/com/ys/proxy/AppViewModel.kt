@@ -317,6 +317,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         appendLog("已删除订阅: $name")
     }
 
+    // ── 长按菜单(更新 / 重命名) ──────────────────────────────────────────
+
+    /** 长按某条已保存订阅时,该字段非 null → 弹出操作菜单 */
+    var actionSub by mutableStateOf<SavedSubscription?>(null)
+        private set
+
+    /** 打开长按操作菜单 */
+    fun startSubAction(sub: SavedSubscription) { actionSub = sub }
+    /** 关闭长按操作菜单 */
+    fun cancelSubAction() { actionSub = null }
+
+    /**
+     * 更新已保存的订阅(长按菜单"更新"项):
+     * - 代理运行中:走 [updateSubscription] 热重载(不停 mihomo)
+     * - 代理未运行:仅重新下载并缓存订阅,等用户启动时直接用缓存
+     *
+     * 注意:需要代理才能下载的订阅,必须在代理运行中时更新
+     * (通过当前 mihomo 代理下载)。代理未运行时直连下载会失败。
+     */
+    fun updateSavedSubscription(sub: SavedSubscription) {
+        actionSub = null
+        subscriptionUrl = sub.url
+        if (isRunning) {
+            appendLog("更新订阅(热重载): ${sub.name}")
+            updateSubscription()
+        } else {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    updating = true
+                    appendLog("代理未运行,直接下载并缓存: ${sub.name}")
+                    val raw = subscription.download(sub.url)
+                    subscriptionCache.save(sub.url, raw)
+                    appendLog("订阅缓存已更新: ${sub.name}")
+                } catch (e: Exception) {
+                    error = "更新订阅失败: ${e.message}\n(如该订阅需要代理,请先启动代理后再更新)"
+                } finally {
+                    updating = false
+                }
+            }
+        }
+    }
+
+    // ── 重命名 ────────────────────────────────────────────────────────────
+
+    /** 重命名中的订阅(非 null 时弹出重命名对话框) */
+    var renamingSub by mutableStateOf<SavedSubscription?>(null)
+        private set
+    /** 重命名对话框输入内容 */
+    var renameText by mutableStateOf("")
+        private set
+
+    fun startRename(sub: SavedSubscription) {
+        actionSub = null
+        renamingSub = sub
+        renameText = sub.name
+    }
+    fun updateRenameText(s: String) { renameText = s }
+    fun cancelRename() {
+        renamingSub = null
+        renameText = ""
+    }
+    fun confirmRename() {
+        val sub = renamingSub ?: return
+        val newName = renameText.trim()
+        if (newName.isEmpty()) { error = "名称不能为空"; return }
+        subStore.rename(sub.name, newName)
+        savedSubscriptions = subStore.list()
+        appendLog("已重命名: ${sub.name} → $newName")
+        renamingSub = null
+        renameText = ""
+    }
+
     fun startProxy() {
         val url = subscriptionUrl.trim()
         if (url.isEmpty()) { error = "请输入订阅链接"; return }

@@ -1,2 +1,3 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle"><solid android:color="#071427" /></shape>
+<!-- launcher 背景:匹配新主题近黑蓝 #0A1626 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle"><solid android:color="#0A1626" /></shape>

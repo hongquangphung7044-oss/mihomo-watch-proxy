@@ -9,7 +9,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,12 +23,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -74,6 +80,8 @@ private fun AppRoot(vm: AppViewModel) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         if (vm.screen == AppViewModel.Screen.Main) MainScreen(vm) else NodesScreen(vm)
         if (vm.showSaveDialog) SaveDialog(vm)
+        if (vm.actionSub != null) SubActionDialog(vm)
+        if (vm.renamingSub != null) RenameDialog(vm)
     }
 }
 
@@ -313,18 +321,31 @@ private fun SubscriptionCard(vm: AppViewModel, context: Context) {
 
 /**
  * 已保存订阅卡片:当前选中明显高亮(secondaryContainer + primary 文字)。
- * 内含删除按钮(独立行,避免误触)。
+ * 长按弹出操作菜单(更新 / 重命名);短按载入/热切换。
+ *
+ * 关键 UX 改善:
+ *  - 代理运行中时,短按 = 热切换(通过当前代理下载新订阅 + 热重载,不停 mihomo)
+ *  - 代理未运行时,短按 = 仅载入 URL(等用户点启动时再下载)
+ *  - 文案明确说明"热切换不停代理",避免用户误以为必须先停代理
+ *
+ * 用 Box + combinedClickable 替代 Card(因为 Wear M3 Card 不支持 onLongClick)。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SavedSubscriptionCard(vm: AppViewModel, sub: SavedSubscription) {
     val selected = sub.url == vm.subscriptionUrl.trim()
-    Card(
-        onClick = { vm.loadSubscription(sub) },
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
-                             else MaterialTheme.colorScheme.surfaceContainerLow
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerLow
+            )
+            .combinedClickable(
+                onClick = { vm.loadSubscription(sub) },
+                onLongClick = { vm.startSubAction(sub) }
+            )
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(
@@ -336,8 +357,14 @@ private fun SavedSubscriptionCard(vm: AppViewModel, sub: SavedSubscription) {
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(2.dp))
+            // 热切换提示:运行中 → "点按热切换(不停代理)";未运行 → "点按载入"
+            val hint = if (selected) {
+                if (vm.isRunning) "● 当前使用 · 点按重新热切换" else "● 当前使用 · 点按重新载入"
+            } else {
+                if (vm.isRunning) "点按热切换(不停代理)· 长按更多" else "点按载入 · 长按更多"
+            }
             Text(
-                if (selected) "● 当前使用 · 点按重新载入" else "点按载入此订阅",
+                hint,
                 color = if (selected) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall
@@ -730,7 +757,15 @@ private fun NodeTile(
 private fun SaveDialog(vm: AppViewModel) {
     Dialog(onDismissRequest = vm::cancelSaveDialog) {
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            // 关键修复:verticalScroll 确保圆形小屏上"取消"按钮可见,
+            // 内容超出屏高时可上下滚动。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text("保存订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -744,13 +779,95 @@ private fun SaveDialog(vm: AppViewModel) {
                 Spacer(Modifier.height(12.dp))
                 FilledTonalButton(
                     onClick = vm::confirmSaveSubscription,
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
                 Spacer(Modifier.height(6.dp))
                 OutlinedButton(
                     onClick = vm::cancelSaveDialog,
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 长按操作菜单对话框
+// ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun SubActionDialog(vm: AppViewModel) {
+    val sub = vm.actionSub ?: return
+    Dialog(onDismissRequest = vm::cancelSubAction) {
+        Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    sub.name,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(12.dp))
+                FilledTonalButton(
+                    onClick = { vm.updateSavedSubscription(sub) },
                     modifier = Modifier.fillMaxWidth().height(44.dp)
-                ) { Text("取消", style = MaterialTheme.typography.bodySmall) }
+                ) {
+                    Text(
+                        if (vm.isRunning) "更新订阅(热重载)" else "更新订阅(直连下载)",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                FilledTonalButton(
+                    onClick = { vm.startRename(sub) },
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) { Text("重命名", style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = vm::cancelSubAction,
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 重命名对话框
+// ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun RenameDialog(vm: AppViewModel) {
+    Dialog(onDismissRequest = vm::cancelRename) {
+        Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("重命名订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "修改后保存即可,URL 保持不变",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(12.dp))
+                UrlInput(vm.renameText, vm::updateRenameText, "输入新名称", true)
+                Spacer(Modifier.height(12.dp))
+                FilledTonalButton(
+                    onClick = vm::confirmRename,
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = vm::cancelRename,
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
             }
         }
     }

@@ -49,6 +49,15 @@ class SubscriptionStore(context: Context) {
         write(list().filterNot { it.name == name })
     }
 
+    /** 重命名(保持 url/savedAt 不变,只改 name;若 newName 已存在则覆盖) */
+    fun rename(oldName: String, newName: String) {
+        val current = list().filterNot { it.name == newName }.toMutableList()
+        val target = current.find { it.name == oldName } ?: return
+        current.remove(target)
+        current.add(target.copy(name = newName))
+        write(current)
+    }
+
     private fun write(list: List<SavedSubscription>) {
         val arr = JSONArray()
         list.forEach { s ->
