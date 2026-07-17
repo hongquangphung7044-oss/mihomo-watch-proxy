@@ -20,7 +20,8 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          # compileSdk = 36(Wear Compose 1.6.2 / Compose UI 1.9.0 要求)
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
       - name: Download mihomo armv7 binary (Android 专用 32位)
         run: |

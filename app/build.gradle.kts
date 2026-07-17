@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.ys.proxy"
-    compileSdk = 35
+    // compileSdk = 36: AndroidX Compose 1.9.0 系列(Wear Compose 1.6.2 传递依赖)
+    // 要求编译期 SDK = 36(Android 16)。targetSdk 仍保持 34,运行时行为不变。
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.ys.proxy"
@@ -52,14 +54,17 @@ android {
 }
 
 dependencies {
-    // Official, version-aligned Wear Compose Material 3 stack.
-    implementation("androidx.wear.compose:compose-material3:1.5.6")
-    implementation("androidx.wear.compose:compose-foundation:1.5.6")
-    implementation("androidx.wear.compose:compose-navigation:1.5.6")
+    // Wear Compose Material 3 1.6.2 —— 彻底重构后的主题系统基线。
+    // 1.6.2 传递依赖 Compose UI/Foundation/Runtime 1.9.0 + kotlin-stdlib 2.1.20,
+    // 故下方显式钉 1.9.0,与 Wear Compose 1.6.2 POM 对齐。
+    implementation("androidx.wear.compose:compose-material3:1.6.2")
+    implementation("androidx.wear.compose:compose-foundation:1.6.2")
+    implementation("androidx.wear.compose:compose-navigation:1.6.2")
     implementation("androidx.activity:activity-compose:1.10.1")
-    implementation("androidx.compose.ui:ui:1.8.2")
-    implementation("androidx.compose.material:material:1.8.2")
-    implementation("androidx.compose.foundation:foundation:1.8.2")
+    implementation("androidx.compose.ui:ui:1.9.0")
+    implementation("androidx.compose.foundation:foundation:1.9.0")
+    // 已删除 androidx.compose.material:material(Compose Material 2):
+    // 全量迁移到 Wear Compose Material 3 后,源码内无任何 androidx.compose.material.* 引用。
 
     implementation("androidx.wear:wear-ongoing:1.1.0")
     implementation("androidx.core:core-ktx:1.15.0")
