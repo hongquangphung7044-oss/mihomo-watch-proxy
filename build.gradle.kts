@@ -15,5 +15,11 @@ buildscript {
         // Kotlin 2.1.20:与 Wear Compose 1.6.2 POM 声明的 kotlin-stdlib 2.1.20 对齐,
         // 避免 Compose Compiler 与 stdlib 版本漂移警告。
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20")
+        // Compose Compiler Gradle Plugin(Kotlin 2.0+ 起,Compose 编译器从 AOSP 迁到 JetBrains,
+        // 并拆为独立插件 org.jetbrains.kotlin.plugin.compose)。
+        // app/build.gradle.kts 通过 plugins { id(...) } 不带 version 引用本插件,
+        // 故必须把对应 artifact 显式放到 buildscript classpath 才能被解析。
+        // 版本必须与 kotlin-gradle-plugin 严格对齐(同 2.1.20)。
+        classpath("org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.1.20")
     }
 }
