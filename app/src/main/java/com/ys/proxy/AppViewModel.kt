@@ -188,11 +188,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 节点是否为当前选中节点(任一 Selector 分组选中它就算)。
-     * 用于 UI 黄点提示 —— 多个分组各自选了不同节点时,会有多个黄点(正常)。
+     * 用户当前选中的节点(扁平化视图下)。
+     *
+     * 用于解决"多个黄点"问题:订阅里多个 Selector 分组各自有默认选中节点
+     * (PROXY 选了 A,🚀 节点选择 选了 B,🎮 游戏平台 选了 C...),
+     * 旧 isNodeActive 判断"任一分组选中就标黄" → UI 上 A/B/C 都显示黄点,
+     * 用户看不出哪个是自己刚选的。
+     *
+     * 新逻辑:
+     *  - 用户点节点 → 立即记到 userSelectedNode,UI 只在该节点显示黄点
+     *  - 切换失败或重新 loadGroups 时清空(回到"显示分组默认选择"模式)
+     *  - userSelectedNode 为 null 时(初次进入),只标 GLOBAL/PROXY 主分组的 now
+     */
+    private var userSelectedNode: String? = null
+
+    /**
+     * 节点是否为当前选中节点。
+     *
+     * 优先级:
+     *  1. 用户刚选过的节点(userSelectedNode)→ 只有这一个显示黄点
+     *  2. 用户未选过时(初次进入),看主分组(GLOBAL > PROXY > 第一个 Selector)的 now
+     *
+     * 这样避免多个分组各自默认选择导致多个黄点,用户无法区分自己刚选的。
      */
     fun isNodeActive(nodeName: String): Boolean {
-        return groups.any { it.now == nodeName }
+        val selected = userSelectedNode
+        if (selected != null) {
+            return nodeName == selected
+        }
+        // 初次进入未选过:只标主分组(GLOBAL > PROXY > 第一个 Selector)的 now
+        val mainGroup = groups.firstOrNull { it.name == "GLOBAL" }
+            ?: groups.firstOrNull { it.name == "PROXY" }
+            ?: groups.firstOrNull()
+        ?: return false
+        return mainGroup.now == nodeName
     }
 
     fun refreshShizuku() {
