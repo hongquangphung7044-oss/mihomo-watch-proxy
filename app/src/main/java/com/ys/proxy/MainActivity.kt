@@ -819,7 +819,7 @@ private fun SaveDialog(vm: AppViewModel) {
     // fillMaxWidth 会让 Dialog 内部 Box 高度 wrap_content,Scrim 不覆盖整个圆形屏,
     // 圆形屏上下角会露出黑色半圆遮罩。fillMaxSize 让 Scrim 正确覆盖圆形屏。
     Dialog(
-        showDialog = true,
+        visible = true,
         onDismissRequest = vm::cancelSaveDialog,
         modifier = Modifier.fillMaxSize()
     ) {
@@ -869,7 +869,7 @@ private fun SubActionDialog(vm: AppViewModel) {
     val sub = vm.actionSub ?: return
     // modifier 用 fillMaxSize 让 Scrim 正确覆盖圆形屏,避免上下半圆遮罩
     Dialog(
-        showDialog = true,
+        visible = true,
         onDismissRequest = vm::cancelSubAction,
         modifier = Modifier.fillMaxSize()
     ) {
@@ -919,7 +919,7 @@ private fun SubActionDialog(vm: AppViewModel) {
 private fun RenameDialog(vm: AppViewModel) {
     // modifier 用 fillMaxSize 让 Scrim 正确覆盖圆形屏,避免上下半圆遮罩
     Dialog(
-        showDialog = true,
+        visible = true,
         onDismissRequest = vm::cancelRename,
         modifier = Modifier.fillMaxSize()
     ) {
