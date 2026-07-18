@@ -172,6 +172,26 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
         }
     }
 
+    /**
+     * URL path 段编码(用于 /proxies/{name}/... 的 name 部分)。
+     *
+     * 关键修复(真正的测速根因):
+     *  URLEncoder.encode 把空格编成 "+",但这是 query string 的编码规则。
+     *  mihomo API 的 name 在 URL path 里(/proxies/{name}/delay),
+     *  按 RFC 3986,path 里的 "+" 是字面字符,不会被解码成空格。
+     *
+     *  也就是说:
+     *   - 旧代码:URLEncoder.encode("香港 01") = "香港+01"
+     *   - mihomo 收到 /proxies/香港+01/delay,找名为 "香港+01" 的节点
+     *   - 找不到 → 返回错误 → testDelay 返回 -1
+     *
+     *  完美解释用户报告:
+     *   - wd-purple 订阅全部测不出来 → 节点名都含空格
+     *   - 另一个机场部分能测 → 部分节点名不含空格
+     *   - 手机上别的 Clash 客户端正常 → 它们 path 编码正确
+     *
+     *  修复:URLEncoder.encode 后把 "+" 替换成 "%20"(URL path 里空格的正确编码)。
+     */
     private fun urlEncode(s: String): String =
-        java.net.URLEncoder.encode(s, "UTF-8")
+        java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 }
