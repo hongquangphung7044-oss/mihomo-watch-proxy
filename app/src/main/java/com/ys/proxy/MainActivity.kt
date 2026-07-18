@@ -49,7 +49,6 @@ import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
-import androidx.wear.compose.material3.Dialog
 import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
@@ -593,11 +592,13 @@ private fun NodesScreen(vm: AppViewModel) {
         // 操作区:更新订阅 / 测速 / 排序,统一在一张卡片内(Column 包裹,绝不重叠)
         item { NodesActionCard(vm) }
 
-        if (vm.filteredGroups.isEmpty()) {
+        if (vm.groups.isEmpty()) {
             item { EmptyNodesCard() }
         }
-        // 每个 Selector 分组独立一张卡片(已过滤引用型分组,只展示含落地节点的)
-        items(vm.filteredGroups) { group ->
+        // 显示所有 Selector 分组(不再过滤引用型分组):
+        // 用户反馈"有的分组下的节点显示不可用但实际可用",根因是 filteredGroups
+        // 过滤太严格,把含有引用的分组也过滤掉了。直接显示所有分组,让用户看到完整节点。
+        items(vm.groups) { group ->
             SelectorGroupCard(vm, group)
         }
     }
@@ -762,7 +763,9 @@ private fun NodeCapsule(
 ) {
     val (delayLabel, delayColor) = when (delay) {
         null -> "未测速" to MaterialTheme.colorScheme.onSurfaceVariant
-        -1 -> "不可用" to StatusBad
+        // 测速失败返回 -1:不显示"不可用"(误导,节点可能仍可用访问其他网站),
+        // 改为"测速失败"+ 灰色,让用户知道是测速环节失败而非节点本身不可用
+        -1 -> "测速失败" to MaterialTheme.colorScheme.onSurfaceVariant
         in 0..300 -> "${delay}ms" to StatusGood
         in 301..800 -> "${delay}ms" to StatusWarning
         else -> "${delay}ms" to StatusBad
@@ -814,24 +817,29 @@ private fun NodeCapsule(
 
 @Composable
 private fun SaveDialog(vm: AppViewModel) {
-    // 用 Wear M3 的 Dialog(替代标准 androidx.compose.ui.window.Dialog)
-    // 关键修复:modifier 用 fillMaxSize 而非 fillMaxWidth ——
-    // fillMaxWidth 会让 Dialog 内部 Box 高度 wrap_content,Scrim 不覆盖整个圆形屏,
-    // 圆形屏上下角会露出黑色半圆遮罩。fillMaxSize 让 Scrim 正确覆盖圆形屏。
-    Dialog(
-        visible = true,
-        onDismissRequest = vm::cancelSaveDialog,
-        modifier = Modifier.fillMaxSize()
+    // 关键修复:彻底弃用 Wear M3 Dialog(其 Scrim 在圆形屏上有上下黑色遮罩),
+    // 改用 Box + Card fillMaxSize 自己实现对话框:
+    //  - Box 黑色背景遮挡下层 UI
+    //  - Card fillMaxSize 占满整个圆形屏,无"上下黑色遮罩"
+    //  - 内容垂直居中 + padding 留出圆形屏安全区
+    // 取消仅通过"取消"按钮(防误触,无点击外部取消)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center
     ) {
-        // Dialog 内部 content 直接放 Card,Card 提供 surfaceContainer 背景 + 圆角
-        Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
-            // verticalScroll 确保圆形小屏上"取消"按钮可见
+        Card(
+            onClick = {},
+            modifier = Modifier.fillMaxSize()
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                    .fillMaxSize()
+                    .padding(20.dp)
                     .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
                 Text("保存订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
@@ -844,8 +852,7 @@ private fun SaveDialog(vm: AppViewModel) {
                 Spacer(Modifier.height(12.dp))
                 UrlInput(vm.editingSubName, vm::updateEditingName, "例如:主线路", true)
                 Spacer(Modifier.height(12.dp))
-                // 主操作按钮用 Button(primary 琥珀金背景) —— 比 FilledTonalButton 更显眼,
-                // 在深色 Card 背景上有明显圆框,不会"只有文字"
+                // 主操作按钮用 Button(primary 琥珀金背景),在深色 Card 背景上有明显圆框
                 Button(
                     onClick = vm::confirmSaveSubscription,
                     modifier = Modifier.fillMaxWidth().height(48.dp)
@@ -867,16 +874,24 @@ private fun SaveDialog(vm: AppViewModel) {
 @Composable
 private fun SubActionDialog(vm: AppViewModel) {
     val sub = vm.actionSub ?: return
-    // modifier 用 fillMaxSize 让 Scrim 正确覆盖圆形屏,避免上下半圆遮罩
-    Dialog(
-        visible = true,
-        onDismissRequest = vm::cancelSubAction,
-        modifier = Modifier.fillMaxSize()
+    // 弃用 Wear M3 Dialog,改用 Box + Card fillMaxSize(无上下黑色遮罩)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center
     ) {
-        Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+        Card(
+            onClick = {},
+            modifier = Modifier.fillMaxSize()
+        ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
                 Text(
                     sub.name,
@@ -917,16 +932,24 @@ private fun SubActionDialog(vm: AppViewModel) {
 
 @Composable
 private fun RenameDialog(vm: AppViewModel) {
-    // modifier 用 fillMaxSize 让 Scrim 正确覆盖圆形屏,避免上下半圆遮罩
-    Dialog(
-        visible = true,
-        onDismissRequest = vm::cancelRename,
-        modifier = Modifier.fillMaxSize()
+    // 弃用 Wear M3 Dialog,改用 Box + Card fillMaxSize(无上下黑色遮罩)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center
     ) {
-        Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+        Card(
+            onClick = {},
+            modifier = Modifier.fillMaxSize()
+        ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
                 Text("重命名订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(4.dp))
