@@ -197,8 +197,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * 用户选过的节点 → userSelectedNode 记下,UI 用琥珀金高亮(强)
      * 其他分组默认选中的节点 → UI 用次要色标黄点(弱)
      * 未选中节点 → 无标记
+     *
+     * 必须用 mutableStateOf(不是普通 var),否则 Compose 看不到变化不会重组,
+     * 表现为:点节点后黄标不切换,必须滑走再滑回来才更新(用户报告的 bug)。
      */
-    private var userSelectedNode: String? = null
+    private var userSelectedNode by mutableStateOf<String?>(null)
 
     /**
      * 节点选中状态(三态)。
