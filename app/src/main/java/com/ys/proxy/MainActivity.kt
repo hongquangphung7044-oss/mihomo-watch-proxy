@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,8 +22,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -40,8 +41,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.core.content.ContextCompat
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -49,6 +48,7 @@ import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
+import androidx.wear.compose.material3.Dialog
 import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
@@ -687,101 +687,121 @@ private fun EmptyNodesCard() {
 }
 
 /**
- * Selector 分组卡:分组名 + 当前节点(高亮)+ 节点网格(2 列)。
- * 整张卡片用 Column 包裹,内部节点网格用 Row + Spacer。
+ * Selector 分组卡:分组名 + 当前节点(高亮)+ 节点列表(单行跑道形胶囊)。
+ *
+ * 设计(v2,按用户反馈):
+ *  - 去除外层 Card 灰色包围(改为透明背景,直接铺在 ScalingLazyColumn 上)
+ *  - 分组名 + 当前节点 用标题行表达,不再包裹卡片
+ *  - 每个节点改为单行跑道形胶囊(用 Button + RoundedCornerShape(50))
+ *  - 节点名过长时用 basicMarquee 横向滚动,不截断不省略
+ *  - 延迟用颜色区分(绿/橙/红),作为节点名后缀文字
+ *
+ * 注意:Wear M3 1.6.2 没有 Chip/FilterChip 组件(已从 M2 退役),
+ * 故用 Button + 自定义 shape 拼装单行跑道形胶囊。
  */
 @Composable
 private fun SelectorGroupCard(vm: AppViewModel, group: MihomoApi.Proxy) {
-    Card(
-        onClick = {},
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
+    // 不再用 Card 包裹,直接 Column 铺在 ScalingLazyColumn 上,无灰色包围
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp)
     ) {
-        Column(Modifier.padding(13.dp)) {
-            // 分组名(琥珀金标题色)
-            Text(
-                group.name,
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+        // 分组名(琥珀金标题色)+ 当前节点 用一行表达
+        Text(
+            group.name,
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            // 分组名过长时 marquee 滚动,不省略
+            modifier = Modifier.basicMarquee(),
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(2.dp))
+        // 当前节点(成功色 + ● 标记,更醒目),过长时 marquee 滚动
+        Text(
+            "● 当前:${group.now ?: "未选择"}",
+            color = StatusGood,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            modifier = Modifier.basicMarquee(),
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(10.dp))
+        // 节点列表:每个节点单行跑道形胶囊,垂直堆叠
+        val nodes = vm.sortedNodes(group)
+        nodes.forEachIndexed { index, (node, delay) ->
+            NodeCapsule(
+                name = node,
+                delay = delay,
+                selected = node == group.now,
+                onClick = { vm.selectNode(group.name, node) }
             )
-            Spacer(Modifier.height(3.dp))
-            // 当前节点(成功色 + ● 标记,更醒目)
-            Text(
-                "● 当前:${group.now ?: "未选择"}",
-                color = StatusGood,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.height(8.dp))
-            // 节点网格:2 列,每行用 Row + Spacer 包裹
-            val pairs = vm.sortedNodes(group).chunked(2)
-            pairs.forEachIndexed { index, pair ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    pair.forEach { (node, delay) ->
-                        NodeTile(node, delay, node == group.now, Modifier.weight(1f)) {
-                            vm.selectNode(group.name, node)
-                        }
-                    }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
-                }
-                if (index < pairs.size - 1) Spacer(Modifier.height(6.dp))
-            }
+            if (index < nodes.size - 1) Spacer(Modifier.height(6.dp))
         }
     }
 }
 
 /**
- * 节点单元:延迟颜色 + 文本同时表达。
+ * 单行跑道形节点胶囊(替代旧 NodeTile 的 2 列网格)。
+ *
+ * 用 Button + RoundedCornerShape(50) 实现跑道形(两端半圆)。
+ * 选中态用 secondaryContainer 背景 + primary 文字,未选中用 surfaceContainerHigh。
+ * 节点名过长用 basicMarquee 横向滚动,延迟作为后缀文字。
+ *
+ * 延迟颜色(同时表达):
  *  - 0–300ms 绿(快)
  *  - 301–800ms 橙(中)
  *  - 其他 红(慢/失败/未测)
  */
 @Composable
-private fun NodeTile(
+private fun NodeCapsule(
     name: String,
     delay: Int?,
     selected: Boolean,
-    modifier: Modifier,
     onClick: () -> Unit
 ) {
-    val (label, color) = when (delay) {
+    val (delayLabel, delayColor) = when (delay) {
         null -> "未测速" to MaterialTheme.colorScheme.onSurfaceVariant
         -1 -> "不可用" to StatusBad
         in 0..300 -> "${delay}ms" to StatusGood
         in 301..800 -> "${delay}ms" to StatusWarning
         else -> "${delay}ms" to StatusBad
     }
-    Card(
+    Button(
         onClick = onClick,
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+        shape = RoundedCornerShape(50),  // 跑道形(两端半圆)
+        colors = ButtonDefaults.buttonColors(
             containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
-                             else MaterialTheme.colorScheme.surfaceContainerHigh
+                             else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                           else MaterialTheme.colorScheme.onSurface
         )
     ) {
-        Column(
-            modifier = Modifier.padding(8.dp).heightIn(min = 70.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+        // 节点名 + 延迟 横向布局
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // 节点名:过长时 marquee 滚动(不截断),选中态加 ● 前缀
             Text(
-                name,
+                if (selected) "● $name" else name,
                 color = if (selected) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurface,
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 3,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier
+                    .weight(1f)
+                    .basicMarquee(),
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.height(4.dp))
-            // 延迟颜色 + 文本同时表达:选中态加 ● 标记
+            Spacer(Modifier.width(8.dp))
+            // 延迟后缀:固定宽度,颜色表达状态
             Text(
-                if (selected) "● $label" else label,
-                color = color,
-                style = MaterialTheme.typography.bodyExtraSmall
+                delayLabel,
+                color = delayColor,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1
             )
         }
     }
@@ -793,7 +813,13 @@ private fun NodeTile(
 
 @Composable
 private fun SaveDialog(vm: AppViewModel) {
-    Dialog(onDismissRequest = vm::cancelSaveDialog) {
+    // 用 Wear M3 的 Dialog(替代标准 androidx.compose.ui.window.Dialog)
+    // Wear M3 Dialog 专为圆形屏设计,正确处理边缘裁剪,不会出现黑半圆遮罩。
+    Dialog(
+        showDialog = true,
+        onDismissRequest = vm::cancelSaveDialog,
+        modifier = Modifier.fillMaxWidth()
+    ) {
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
             // 关键修复:verticalScroll 确保圆形小屏上"取消"按钮可见,
             // 内容超出屏高时可上下滚动。
@@ -836,7 +862,11 @@ private fun SaveDialog(vm: AppViewModel) {
 @Composable
 private fun SubActionDialog(vm: AppViewModel) {
     val sub = vm.actionSub ?: return
-    Dialog(onDismissRequest = vm::cancelSubAction) {
+    Dialog(
+        showDialog = true,
+        onDismissRequest = vm::cancelSubAction,
+        modifier = Modifier.fillMaxWidth()
+    ) {
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -880,7 +910,11 @@ private fun SubActionDialog(vm: AppViewModel) {
 
 @Composable
 private fun RenameDialog(vm: AppViewModel) {
-    Dialog(onDismissRequest = vm::cancelRename) {
+    Dialog(
+        showDialog = true,
+        onDismissRequest = vm::cancelRename,
+        modifier = Modifier.fillMaxWidth()
+    ) {
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp).verticalScroll(rememberScrollState()),

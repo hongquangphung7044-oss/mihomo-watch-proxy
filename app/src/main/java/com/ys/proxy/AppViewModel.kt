@@ -74,6 +74,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /**
+     * 所有 proxy 的完整快照(含落地节点 + 所有分组),用于精准判断引用关系。
+     * 仅在 loadGroups 时更新,filteredGroups 读它做过滤判断。
+     */
+    private var allProxiesSnapshot: Map<String, MihomoApi.Proxy> = emptyMap()
+
+    /**
      * 过滤后的分组列表(只展示含落地节点的分组,过滤引用型分组)。
      *
      * 背景:机场订阅的 proxies 通常包含:
@@ -81,19 +87,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  - YouTube / Apple / Google:all 里全是引用其他分组(如 ["PROXY"] 或 ["🚀 节点选择"]),
      *    在手表上切这种分组没意义(只是改了分流路径,不是选落地节点)
      *
-     * 过滤规则:一个分组是"落地节点分组" ⟺ all 里至少有一个元素不是其他 Proxy 的 name。
-     * 同时过滤掉 all.size == 1 且唯一元素是分组引用的(纯引用型)。
+     * 严格过滤规则(用 allProxiesSnapshot 而非 groups):
+     *  一个 Selector 分组是"落地节点分组" ⟺ 它的 all 里**至少有一个元素**
+     *  在 allProxiesSnapshot 中不是 Selector/URLTest/Fallback 类型(即落地节点,
+     *  type 是 Shadowsocks/Vmess/Trojan/Hysteria 等具体协议)。
      *
-     * 这样手表上只显示真正能挑落地节点的分组(通常就 1-2 个),体验更聚焦。
+     * 这样能精准区分:落地节点(SS/VMess) vs 分组引用(Selector/URLTest/Fallback 的 name)。
+     * 之前用 groups.map { it.name } 判断是错的 —— 落地节点根本不在 groups 里
+     * (groups 只含 Selector),所以 YouTube 分组的 all=["PROXY"] 会因为
+     * "PROXY" 不在落地节点 name 集合里而被误判为落地节点分组。
+     *
+     * 用户反馈"还是多个分组"就是因为这个逻辑漏洞。
      */
     val filteredGroups: List<MihomoApi.Proxy>
         get() {
             if (groups.isEmpty()) return emptyList()
-            // 收集所有 Proxy 的 name(用于判断 all 元素是否为分组引用)
-            val groupNames = groups.map { it.name }.toHashSet()
+            // 所有 type 是分组类型(Selector/URLTest/Fallback/LoadBalance)的 name
+            // → 这些是"分组引用",不是落地节点
+            val groupReferenceNames = allProxiesSnapshot.values
+                .filter { it.type in setOf("Selector", "URLTest", "Fallback", "LoadBalance") }
+                .map { it.name }
+                .toHashSet()
             return groups.filter { group ->
-                // 至少有一个 all 元素不是其他分组的 name → 是落地节点
-                group.all.any { it !in groupNames }
+                // 至少有一个 all 元素不是分组引用 → 是真正的落地节点
+                group.all.any { it !in groupReferenceNames }
             }
         }
     var loading by mutableStateOf(false)
@@ -570,6 +587,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!isRunning) { error = "mihomo 未运行"; return }
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // 先取完整快照(含落地节点 + 所有分组),用于 filteredGroups 精准过滤
+                allProxiesSnapshot = api.getProxies()
                 groups = api.getSelectorGroups()
                 if (groups.isNotEmpty()) screen = Screen.Nodes
             } catch (e: Exception) {
@@ -595,6 +614,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             val ok = api.selectNode(group, node)
             if (ok) {
+                allProxiesSnapshot = api.getProxies()
                 groups = api.getSelectorGroups()
             } else {
                 error = "切换节点失败"
