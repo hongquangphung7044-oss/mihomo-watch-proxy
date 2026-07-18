@@ -349,11 +349,14 @@ class ShizukuManager(private val context: Context) {
             process.inputStream.bufferedReader().use { outBuilder.append(it.readText()) }
         } catch (_: Exception) {}
 
-        // waitFor 加 30s 超时,避免命令挂起永久阻塞
-        if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
-            process.destroyForcibly()
-            return outBuilder.toString() + errBuilder.toString() + "\n[TIMEOUT: 命令执行超时 30s]"
-        }
+        // 修复:不用 waitFor 超时 + destroyForcibly。
+        // 原因:Shizuku.newProcess 返回的是远程进程代理,destroyForcibly 在 Shizuku
+        // 服务进程那边可能无效(远程 destroy 不可靠),进程没真正被杀但 Java 这边认为
+        // 已超时,后续访问 exitValue 会抛 "Process hasn't exited" 异常。
+        // 而且 cp 大文件(geoip.metadb 5MB+)在弱 CPU 手表上可能超过 30s,被强杀后
+        // cp 没完成,后续验证失败 → "二进制安装失败"。
+        // waitFor() 无超时:命令是同步的(sh -c "cp ..."),会自然结束,不会卡死。
+        process.waitFor()
         errThread.join(2000)
         return outBuilder.toString() + errBuilder.toString()
     }
