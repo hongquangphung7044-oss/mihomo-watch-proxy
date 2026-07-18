@@ -140,34 +140,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 扁平化的所有落地节点列表(去重)。
      *
-     * 用户反馈"要直接显示所有节点,不要按分组"。这里从所有 Selector 分组的 all 字段
-     * 收集所有节点名,去重后返回。UI 直接 items(allNodes) 渲染单行胶囊即可。
+     * 用户反馈"要直接显示所有节点,不要按分组"。这里直接从 mihomo 返回的所有
+     * proxies 中按 type 过滤出落地节点,UI 直接 items(allNodes) 渲染单行胶囊即可。
      *
-     * 注意:这里只收集落地节点(Selector.all 里的字符串),不区分协议类型 ——
-     * 因为 mihomo API 把"引用其他分组的分组"也放在 all 里(如 all=["PROXY"]),
-     * 但这些引用名在 allProxiesSnapshot 里也是 Selector/URLTest 类型,UI 上点击
-     * 它们没意义(不是真正的落地节点)。这里用 groupReferenceNames 过滤掉。
+     * 关键修复(对标 FlClash/NekoBox + 解决 v1.0.58 之后回归的"部分/全部节点测不出来"):
+     *  旧实现只从 type==Selector 的分组(groups)的 all 字段收集,再过滤掉分组引用名。
+     *  但很多机场(尤其 subconverter 转换的 clash 订阅)结构是:
+     *
+     *    PROXY (Selector) all=["♻️ 自动选择"]                ← 只引用 URLTest 分组
+     *    ♻️ 自动选择 (URLTest) all=["节点1","节点2",...]      ← 真正落地节点在这
+     *
+     *  旧逻辑:
+     *   - groups 只含 PROXY(Selector)
+     *   - PROXY.all=["♻️ 自动选择"] 全是分组引用 → 被过滤掉
+     *   - ♻️ 自动选择 是 URLTest 不在 groups 里 → 它的 all 不会被遍历
+     *   - 结果:allNodes 空!UI 一个节点都不显示!
+     *
+     *  这正是 wd-purple 订阅"完全测不出来"的根因 —— 不是测速失败,是节点没显示。
+     *
+     *  新逻辑(对标 FlClash):直接按 type 过滤,不依赖分组结构:
+     *   - 排除分组类型(Selector/URLTest/Fallback/LoadBalance/Relay)
+     *   - 排除内置类型(Direct/Reject/Pass/Compatible)
+     *   - 剩下的就是落地节点(SS/VMess/Trojan/Hysteria/Vless/Tuic/WireGuard...)
+     *
+     *  这样不管机场怎么组织分组,所有落地节点都能显示出来,无遗漏无重复。
      */
     val allNodes: List<String>
         get() {
-            if (groups.isEmpty()) return emptyList()
-            // 所有分组类型(Selector/URLTest/Fallback/LoadBalance)的 name → 分组引用
-            val groupReferenceNames = allProxiesSnapshot.values
-                .filter { it.type in setOf("Selector", "URLTest", "Fallback", "LoadBalance") }
+            if (allProxiesSnapshot.isEmpty()) return emptyList()
+            // 排除分组类型 + 内置类型,剩下的就是落地节点
+            val nonNodeTypes = setOf(
+                "Selector", "URLTest", "Fallback", "LoadBalance", "Relay",
+                "Direct", "Reject", "Pass", "Compatible"
+            )
+            return allProxiesSnapshot.values
+                .filter { it.type !in nonNodeTypes }
                 .map { it.name }
-                .toHashSet()
-            // 从所有 Selector 分组的 all 收集节点,过滤掉分组引用,去重保序
-            val seen = HashSet<String>()
-            val result = mutableListOf<String>()
-            for (g in groups) {
-                for (n in g.all) {
-                    if (n !in groupReferenceNames && n !in seen) {
-                        seen.add(n)
-                        result.add(n)
-                    }
-                }
-            }
-            return result
+                .distinct()
         }
 
     /**
