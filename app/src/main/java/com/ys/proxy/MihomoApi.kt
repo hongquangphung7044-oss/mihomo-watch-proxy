@@ -100,27 +100,26 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
     /**
      * 测节点延迟,返回 ms,失败返回 -1。
      *
-     * 测试 URL 选择(参考开源代理 Clash for Android / FlClash / Mihomo 默认配置):
-     *  - 默认用 `http://www.gstatic.com/generate_204`(HTTP,非 HTTPS)
-     *    这是 Clash 系内核的默认测速 URL,几乎所有开源代理都用它。
-     *  - HTTP 的 204 端点只测连通性 + RTT,不涉及 TLS 握手,最稳。
+     * 回归修复:对标 v1.0.58 release(用户实测测速正常工作的版本)。
      *
-     * 关键修复(对标开源项目,彻底解决测速失败):
-     *  - expected 参数用 204(默认值),匹配 generate_204 端点实际返回的状态码。
-     *    之前用 expected=200 是错的 —— generate_204 端点按定义返回 204 No Content,
-     *    expected=200 会让 mihomo 判定所有节点测速失败。
-     *  - 不依赖 HTTP 状态码:mihomo 测速失败时返回 400/500/504,body 是
-     *    {"message":"..."} 而非 {"delay":N}。直接读 body JSON,有 delay 字段就用。
-     *  - 用独立的 testClient(readTimeout=20s),避免被 fastClient 的 5s 超时截断
-     *    (mihomo 内部 timeout=15s,OkHttp 必须 >15s)。
+     * 回归根因:
+     *  全面审查 commit (cbaba81) 加了 `expected=204` 参数 + URL 改成 HTTP,
+     *  导致测速全面失败:
+     *   1. mihomo 的 `expected` 参数是"期望状态码",传 204 后要求测速 URL
+     *      必须严格返回 204。但 generate_204 端点常被 CDN 重定向返回 200,
+     *      mihomo 直接判失败,body 返回 {"message":"..."} 而非 {"delay":N}。
+     *      v1.0.58 不传 expected → mihomo 默认接受所有 2xx → 测速总能成功。
+     *   2. HTTP 容易被运营商/CDN 劫持重定向,HTTPS 更稳。
      *
-     * timeout:15000ms(15 秒),给慢节点 + 网络抖动足够时间。
+     * 保留的改进(非回归点):
+     *  - testClient(readTimeout=20s),mihomo 内部 timeout=15s,OkHttp 必须 >15s
+     *  - 不依赖状态码直接读 body JSON,更鲁棒(mihomo 失败也可能返 200)
      */
-    fun testDelay(nodeName: String, testUrl: String = "http://www.gstatic.com/generate_204"): Int {
+    fun testDelay(nodeName: String, testUrl: String = "https://www.gstatic.com/generate_204"): Int {
         return try {
-            // expected=204:generate_204 端点按定义返回 204 No Content
+            // 不传 expected:让 mihomo 默认接受所有 2xx(对标 v1.0.58)
             val req = Request.Builder()
-                .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=15000&expected=204&url=${urlEncode(testUrl)}")
+                .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=15000&url=${urlEncode(testUrl)}")
                 .header("Authorization", "Bearer $secret")
                 .get()
                 .build()
