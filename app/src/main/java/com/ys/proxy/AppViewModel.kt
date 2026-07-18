@@ -187,10 +187,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return groups.firstOrNull { it.all.contains(nodeName) }?.name
     }
 
-    /** 节点是否为当前选中节点(任一分组选中它就算) */
+    /**
+     * 节点是否为当前选中节点。
+     *
+     * 关键修复:旧逻辑是 groups.any { it.now == nodeName },即只要任一分组
+     * 选中该节点就标黄。但订阅里通常有多个分组(PROXY、♻️ 自动选择、🚀 节点选择...)
+     * 都同时选中同一节点 → UI 显示多个黄点,用户困惑。
+     *
+     * 新逻辑:只看"主分组"的 now。主分组优先级:
+     *   GLOBAL > PROXY > *PROXY* > 🚀 节点选择 > 第一个 Selector 分组
+     * 这样 UI 只有一个节点显示黄点(除非主分组未选中任何 allNodes 里的节点)。
+     */
     fun isNodeActive(nodeName: String): Boolean {
-        return groups.any { it.now == nodeName }
+        val main = mainSelectorGroup ?: return false
+        return main.now == nodeName
     }
+
+    /**
+     * 主 Selector 分组(决定出口 IP 的那个)。
+     * 优先级:GLOBAL > PROXY > *PROXY* > 🚀 节点选择 > 第一个 Selector 分组
+     */
+    private val mainSelectorGroup: MihomoApi.Proxy?
+        get() {
+            if (groups.isEmpty()) return null
+            return groups.firstOrNull { it.name == "GLOBAL" }
+                ?: groups.firstOrNull { it.name == "PROXY" }
+                ?: groups.firstOrNull { it.name.contains("PROXY", ignoreCase = true) }
+                ?: groups.firstOrNull { it.name.contains("节点选择") }
+                ?: groups.firstOrNull()
+        }
 
     fun refreshShizuku() {
         shizukuState = when {
