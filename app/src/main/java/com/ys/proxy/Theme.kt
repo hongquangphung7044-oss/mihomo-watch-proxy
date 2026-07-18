@@ -153,15 +153,15 @@ fun MihomoTheme(content: @Composable () -> Unit) {
 
     // Android 12+ 用系统动态颜色;低版本 fallback 到中性深色方案。
     // 注意:dynamicColorScheme 不是 @Composable,需 remember 包裹。
+    // 用 !! 断言非空:dynamicColorScheme 在字节码层返回 ColorScheme(非空),
+    // 但 remember 重载推断时可能保守成 ColorScheme?,显式 !! 确保传给 MaterialTheme 的是非空。
     val colorScheme = remember(context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // dynamicColorScheme 在 Android 12+ 会从系统壁纸取色,
-            // < 31 时内部会 fallback 到中性色(保险起见我们额外判一次)
             dynamicColorScheme(context)
         } else {
             FallbackColorScheme
         }
-    }
+    }!!
 
     MaterialTheme(
         colorScheme = colorScheme,
