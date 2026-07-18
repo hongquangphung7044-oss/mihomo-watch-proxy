@@ -26,8 +26,8 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
 
     private val client = OkHttpClient.Builder()
         .proxy(java.net.Proxy.NO_PROXY)
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)  // 必须大于测速 timeout(15s),否则 OkHttp 先断连
         .build()
 
     /** 代理节点信息 */
@@ -90,21 +90,30 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
      *  - 必须用 HTTP 而非 HTTPS:HTTPS 在部分节点上 TLS 握手会失败(SNI 被识别 /
      *    证书校验异常),导致测速全部失败;HTTP 的 204 端点只测连通性 + RTT,
      *    不涉及 TLS,最稳。
-     *  - gstatic.com 是 Google 的静态资源域,通过代理访问稳定,
-     *    能真实反映节点访问国外网站的能力。
      *
-     * timeout:默认 10000ms(10 秒),给慢节点足够时间。
+     * 关键修复(测速全部失败的根因):
+     *  - mihomo 的 /proxies/{name}/delay 在测速失败时返回非 200 状态码(400/500/504),
+     *    body 里是 {"message":"..."} 而非 {"delay":N}。之前代码 if(!isSuccessful) return -1
+     *    把所有非 200 都当失败,但实际节点可能可用 —— 只是返回码不匹配 expected。
+     *  - expected 参数默认期望 204,但部分 generate_204 端点会返回 200(如经 CDN 重定向),
+     *    导致 mihomo 判定失败。改为 expected=200 兼容更多场景。
+     *  - 不依赖 HTTP 状态码,直接解析 body JSON:有 delay 字段就用,没有才是真失败。
+     *
+     * timeout:15000ms(15 秒),给慢节点 + 网络抖动足够时间。
      */
     fun testDelay(nodeName: String, testUrl: String = "http://www.gstatic.com/generate_204"): Int {
         return try {
+            // expected=200:接受 200 响应(部分 generate_204 端点经 CDN 重定向后返回 200)
             val req = Request.Builder()
-                .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=10000&url=${urlEncode(testUrl)}")
+                .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=15000&expected=200&url=${urlEncode(testUrl)}")
                 .header("Authorization", "Bearer $secret")
                 .get()
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return -1
-                val obj = JSONObject(resp.body?.string() ?: "{}")
+                // 不依赖状态码:mihomo 测速失败时返回 400/500/504 但 body 仍可能有信息,
+                // 直接读 body JSON,有 delay 字段就用
+                val body = resp.body?.string() ?: "{}"
+                val obj = JSONObject(body)
                 if (obj.has("delay")) obj.getInt("delay") else -1
             }
         } catch (e: Exception) {
