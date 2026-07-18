@@ -137,6 +137,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var updating by mutableStateOf(false)
         private set
 
+    /**
+     * 扁平化的所有落地节点列表(去重)。
+     *
+     * 用户反馈"要直接显示所有节点,不要按分组"。这里从所有 Selector 分组的 all 字段
+     * 收集所有节点名,去重后返回。UI 直接 items(allNodes) 渲染单行胶囊即可。
+     *
+     * 注意:这里只收集落地节点(Selector.all 里的字符串),不区分协议类型 ——
+     * 因为 mihomo API 把"引用其他分组的分组"也放在 all 里(如 all=["PROXY"]),
+     * 但这些引用名在 allProxiesSnapshot 里也是 Selector/URLTest 类型,UI 上点击
+     * 它们没意义(不是真正的落地节点)。这里用 groupReferenceNames 过滤掉。
+     */
+    val allNodes: List<String>
+        get() {
+            if (groups.isEmpty()) return emptyList()
+            // 所有分组类型(Selector/URLTest/Fallback/LoadBalance)的 name → 分组引用
+            val groupReferenceNames = allProxiesSnapshot.values
+                .filter { it.type in setOf("Selector", "URLTest", "Fallback", "LoadBalance") }
+                .map { it.name }
+                .toHashSet()
+            // 从所有 Selector 分组的 all 收集节点,过滤掉分组引用,去重保序
+            val seen = HashSet<String>()
+            val result = mutableListOf<String>()
+            for (g in groups) {
+                for (n in g.all) {
+                    if (n !in groupReferenceNames && n !in seen) {
+                        seen.add(n)
+                        result.add(n)
+                    }
+                }
+            }
+            return result
+        }
+
+    /**
+     * 节点当前所属的分组名(用于显示)。
+     * 一个节点可能被多个分组引用,这里返回第一个找到的分组名。
+     */
+    fun nodeGroup(nodeName: String): String? {
+        return groups.firstOrNull { it.all.contains(nodeName) }?.name
+    }
+
+    /** 节点是否为当前选中节点(任一分组选中它就算) */
+    fun isNodeActive(nodeName: String): Boolean {
+        return groups.any { it.now == nodeName }
+    }
+
     fun refreshShizuku() {
         shizukuState = when {
             !shizuku.isInstalled -> ShizukuState.NOT_INSTALLED
@@ -622,6 +668,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 扁平化视图下切换节点:自动找到第一个包含该节点的 Selector 分组,
+     * 然后调用 [selectNode] 切换。用户不需要关心节点属于哪个分组。
+     */
+    fun selectAnyNode(nodeName: String) {
+        val group = groups.firstOrNull { it.all.contains(nodeName) }
+        if (group != null) {
+            selectNode(group.name, nodeName)
+        } else {
+            error = "节点 $nodeName 不在任何分组中"
+        }
+    }
+
     fun backToMain() { screen = Screen.Main }
 
     fun clearError() { error = null }
@@ -660,41 +719,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 测当前分组下所有节点延迟。
+     * 测所有节点延迟(扁平化,不分分组)。
      * 限流并发(10 路),既比串行快很多,又不至于被机场限速。
      * 结果分批更新 UI(每 800ms 一次),避免节点多时频繁重组导致闪退。
+     *
+     * 用 allNodes(扁平化所有落地节点)而非 groups.flatMap { it.all },
+     * 避免重复测同一个节点(一个节点可能被多个分组引用)。
      */
     fun testAllDelays() {
         if (!isRunning || groups.isEmpty()) { error = "无可用节点"; return }
         if (testingDelays) return
+        val nodes = allNodes
+        if (nodes.isEmpty()) { error = "无可用节点"; return }
         testingDelays = true
         error = null
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val allNodes = groups.flatMap { it.all }.distinct()
-                appendLog("开始测 ${allNodes.size} 个节点延迟(10 并发)...")
+                appendLog("开始测 ${nodes.size} 个节点延迟(10 并发)...")
                 val result = mutableMapOf<String, Int>()
                 val done = AtomicInteger(0)
-                val total = allNodes.size
-                // 用 Semaphore 限流 10 并发(比 5 快,节点多时差距明显)
+                val total = nodes.size
                 val sem = Semaphore(10)
                 val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-                // 节流:UI 更新间隔 800ms,避免节点多时频繁重组卡死/闪退
-                // 用 AtomicLong 避免多协程数据竞争
                 val lastUiUpdate = java.util.concurrent.atomic.AtomicLong(0L)
                 val uiInterval = 800L
-                val jobs = allNodes.map { node ->
+                val jobs = nodes.map { node ->
                     async {
                         sem.acquire()
                         try {
                             val d = api.testDelay(node)
                             synchronized(result) { result[node] = d }
                             done.incrementAndGet()
-                            // 节流更新 UI:距上次更新超过 800ms 才更新
                             val now = System.currentTimeMillis()
                             if (now - lastUiUpdate.get() > uiInterval) {
                                 lastUiUpdate.set(now)
-                                // toMap() 也必须在同步块内,否则 ConcurrentModificationException
                                 val snapshot = synchronized(result) { result.toMap() }
                                 mainHandler.post { delays = snapshot }
                             }
@@ -704,7 +762,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 awaitAll(*jobs.toTypedArray())
-                // 全部测完,最终更新一次 UI(确保显示完整结果)
                 val finalSnapshot = synchronized(result) { result.toMap() }
                 mainHandler.post { delays = finalSnapshot }
                 appendLog("延迟测试完成 ${done.get()}/${total}")
@@ -733,12 +790,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 对某分组的节点列表按当前排序方式返回。
+     * 对所有节点(扁平化)按当前排序方式返回。
      * - sortByDelay=true:延迟升序,未测/失败的放最后
      * - sortByDelay=false:原始顺序
      */
-    fun sortedNodes(group: MihomoApi.Proxy): List<Pair<String, Int?>> {
-        val nodes = group.all
+    fun sortedAllNodes(): List<Pair<String, Int?>> {
+        val nodes = allNodes
         return if (sortByDelay) {
             nodes.map { it to (delays[it] ?: null) }
                 .sortedWith(compareBy(

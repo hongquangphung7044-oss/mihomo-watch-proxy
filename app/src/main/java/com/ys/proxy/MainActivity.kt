@@ -579,6 +579,7 @@ private fun NodesScreen(vm: AppViewModel) {
         state = listState,
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
+        // 圆形屏边缘裁切,留出安全区;item 间距统一管理
         contentPadding = PaddingValues(horizontal = 22.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -592,14 +593,33 @@ private fun NodesScreen(vm: AppViewModel) {
         // 操作区:更新订阅 / 测速 / 排序,统一在一张卡片内(Column 包裹,绝不重叠)
         item { NodesActionCard(vm) }
 
-        if (vm.groups.isEmpty()) {
+        val nodes = vm.sortedAllNodes()
+        if (nodes.isEmpty()) {
             item { EmptyNodesCard() }
-        }
-        // 显示所有 Selector 分组(不再过滤引用型分组):
-        // 用户反馈"有的分组下的节点显示不可用但实际可用",根因是 filteredGroups
-        // 过滤太严格,把含有引用的分组也过滤掉了。直接显示所有分组,让用户看到完整节点。
-        items(vm.groups) { group ->
-            SelectorGroupCard(vm, group)
+        } else {
+            // 节点计数标题(琥珀金),让用户知道总节点数
+            item {
+                Text(
+                    "共 ${nodes.size} 个节点",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                    textAlign = TextAlign.Start,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            // 直接扁平化显示所有节点(不再按分组):
+            // 用户反馈"直接显示所有节点就行了",参考开源代理(如 Clash for Android /
+            // FlClash)的节点列表视图 —— 一个节点一行,单行跑道形胶囊,选中态高亮。
+            items(nodes) { (node, delay) ->
+                NodeCapsule(
+                    name = node,
+                    delay = delay,
+                    selected = vm.isNodeActive(node),
+                    onClick = { vm.selectAnyNode(node) }
+                )
+            }
         }
     }
 }
@@ -689,60 +709,6 @@ private fun EmptyNodesCard() {
 }
 
 /**
- * Selector 分组卡:分组名 + 当前节点(高亮)+ 节点列表(单行跑道形胶囊)。
- *
- * 设计(v2,按用户反馈):
- *  - 去除外层 Card 灰色包围(改为透明背景,直接铺在 ScalingLazyColumn 上)
- *  - 分组名 + 当前节点 用标题行表达,不再包裹卡片
- *  - 每个节点改为单行跑道形胶囊(用 Button + RoundedCornerShape(50))
- *  - 节点名过长时用 basicMarquee 横向滚动,不截断不省略
- *  - 延迟用颜色区分(绿/橙/红),作为节点名后缀文字
- *
- * 注意:Wear M3 1.6.2 没有 Chip/FilterChip 组件(已从 M2 退役),
- * 故用 Button + 自定义 shape 拼装单行跑道形胶囊。
- */
-@Composable
-private fun SelectorGroupCard(vm: AppViewModel, group: MihomoApi.Proxy) {
-    // 不再用 Card 包裹,直接 Column 铺在 ScalingLazyColumn 上,无灰色包围
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp, horizontal = 4.dp)
-    ) {
-        // 分组名(琥珀金标题色)+ 当前节点 用一行表达
-        Text(
-            group.name,
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            // 分组名过长时 marquee 滚动,不省略
-            modifier = Modifier.basicMarquee(),
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(Modifier.height(2.dp))
-        // 当前节点(成功色 + ● 标记,更醒目),过长时 marquee 滚动
-        Text(
-            "● 当前:${group.now ?: "未选择"}",
-            color = StatusGood,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
-            modifier = Modifier.basicMarquee(),
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(Modifier.height(10.dp))
-        // 节点列表:每个节点单行跑道形胶囊,垂直堆叠
-        val nodes = vm.sortedNodes(group)
-        nodes.forEachIndexed { index, (node, delay) ->
-            NodeCapsule(
-                name = node,
-                delay = delay,
-                selected = node == group.now,
-                onClick = { vm.selectNode(group.name, node) }
-            )
-            if (index < nodes.size - 1) Spacer(Modifier.height(6.dp))
-        }
-    }
-}
-
-/**
  * 单行跑道形节点胶囊(替代旧 NodeTile 的 2 列网格)。
  *
  * 用 Button + RoundedCornerShape(50) 实现跑道形(两端半圆)。
@@ -817,52 +783,46 @@ private fun NodeCapsule(
 
 @Composable
 private fun SaveDialog(vm: AppViewModel) {
-    // 关键修复:彻底弃用 Wear M3 Dialog(其 Scrim 在圆形屏上有上下黑色遮罩),
-    // 改用 Box + Card fillMaxSize 自己实现对话框:
-    //  - Box 黑色背景遮挡下层 UI
-    //  - Card fillMaxSize 占满整个圆形屏,无"上下黑色遮罩"
-    //  - 内容垂直居中 + padding 留出圆形屏安全区
-    // 取消仅通过"取消"按钮(防误触,无点击外部取消)
+    // 关键修复:彻底弃用 Wear M3 Dialog 和 Card(都是圆角矩形,在圆形屏上
+    // 四角显示黑色 = "上下横切一刀"的黑色遮罩)。
+    // 改用 Box + Column + background(透明背景的 surfaceContainer),无圆角,
+    // 在圆形屏上自然被屏幕裁剪成圆形,无任何黑色遮罩。
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black),  // 黑底遮罩下层 UI
         contentAlignment = Alignment.Center
     ) {
-        Card(
-            onClick = {},
-            modifier = Modifier.fillMaxSize()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainer)  // 无圆角,圆形屏自然裁剪
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text("保存订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "给这条订阅起一个容易识别的名称",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(12.dp))
-                UrlInput(vm.editingSubName, vm::updateEditingName, "例如:主线路", true)
-                Spacer(Modifier.height(12.dp))
-                // 主操作按钮用 Button(primary 琥珀金背景),在深色 Card 背景上有明显圆框
-                Button(
-                    onClick = vm::confirmSaveSubscription,
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = vm::cancelSaveDialog,
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
-                ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
-            }
+            Text("保存订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "给这条订阅起一个容易识别的名称",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(12.dp))
+            UrlInput(vm.editingSubName, vm::updateEditingName, "例如:主线路", true)
+            Spacer(Modifier.height(12.dp))
+            // 主操作按钮用 Button(primary 琥珀金背景),在深色背景上有明显圆框
+            Button(
+                onClick = vm::confirmSaveSubscription,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = vm::cancelSaveDialog,
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
         }
     }
 }
@@ -874,54 +834,51 @@ private fun SaveDialog(vm: AppViewModel) {
 @Composable
 private fun SubActionDialog(vm: AppViewModel) {
     val sub = vm.actionSub ?: return
-    // 弃用 Wear M3 Dialog,改用 Box + Card fillMaxSize(无上下黑色遮罩)
+    // 弃用 Dialog 和 Card(圆角矩形会在圆形屏上有黑色遮罩),
+    // 用 Box + Column + background(surfaceContainer) 无圆角,圆形屏自然裁剪
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        Card(
-            onClick = {},
-            modifier = Modifier.fillMaxSize()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+            Text(
+                sub.name,
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(12.dp))
+            // 主操作按钮用 Button(primary 琥珀金背景),有明显圆框
+            Button(
+                onClick = { vm.updateSavedSubscription(sub) },
+                modifier = Modifier.fillMaxWidth().height(48.dp)
             ) {
                 Text(
-                    sub.name,
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    if (vm.isRunning) "更新订阅(热重载)" else "更新订阅(直连下载)",
+                    style = MaterialTheme.typography.bodySmall
                 )
-                Spacer(Modifier.height(12.dp))
-                // 主操作按钮用 Button(primary 琥珀金背景),有明显圆框
-                Button(
-                    onClick = { vm.updateSavedSubscription(sub) },
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) {
-                    Text(
-                        if (vm.isRunning) "更新订阅(热重载)" else "更新订阅(直连下载)",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { vm.startRename(sub) },
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) { Text("重命名", style = MaterialTheme.typography.bodySmall) }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = vm::cancelSubAction,
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
-                ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
             }
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { vm.startRename(sub) },
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("重命名", style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = vm::cancelSubAction,
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
         }
     }
 }
@@ -932,47 +889,44 @@ private fun SubActionDialog(vm: AppViewModel) {
 
 @Composable
 private fun RenameDialog(vm: AppViewModel) {
-    // 弃用 Wear M3 Dialog,改用 Box + Card fillMaxSize(无上下黑色遮罩)
+    // 弃用 Dialog 和 Card(圆角矩形会在圆形屏上有黑色遮罩),
+    // 用 Box + Column + background(surfaceContainer) 无圆角,圆形屏自然裁剪
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        Card(
-            onClick = {},
-            modifier = Modifier.fillMaxSize()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text("重命名订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "修改后保存即可,URL 保持不变",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(12.dp))
-                UrlInput(vm.renameText, vm::updateRenameText, "输入新名称", true)
-                Spacer(Modifier.height(12.dp))
-                // 主操作按钮用 Button(primary 琥珀金背景),有明显圆框
-                Button(
-                    onClick = vm::confirmRename,
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = vm::cancelRename,
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
-                ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
-            }
+            Text("重命名订阅", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "修改后保存即可,URL 保持不变",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(12.dp))
+            UrlInput(vm.renameText, vm::updateRenameText, "输入新名称", true)
+            Spacer(Modifier.height(12.dp))
+            // 主操作按钮用 Button(primary 琥珀金背景),有明显圆框
+            Button(
+                onClick = vm::confirmRename,
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = vm::cancelRename,
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
         }
     }
 }

@@ -81,8 +81,20 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
         }
     }
 
-    /** 测节点延迟,返回 ms,失败返回 -1 */
-    fun testDelay(nodeName: String, testUrl: String = "https://www.gstatic.com/generate_204"): Int {
+    /**
+     * 测节点延迟,返回 ms,失败返回 -1。
+     *
+     * 测试 URL 选择:
+     *  - 默认用 `https://www.google.com/generate_204`(gstatic 在国内被墙,
+     *    通过代理测 google 的 204 端点最稳,能真实反映节点访问国外网站的能力)
+     *  - 备选 `https://www.gstatic.com/generate_204`(gstatic 也被墙,但部分机场
+     *    路由对 gstatic 有特殊处理,可能测速成功但实际访问失败)
+     *  - `https://cp.cloudflare.com/generate_204`(Cloudflare,国外通用)
+     *
+     * 关键:测速 URL 必须是"需要代理才能访问"的站点,否则节点直连成功,
+     * 测出来的延迟不能反映节点实际质量。
+     */
+    fun testDelay(nodeName: String, testUrl: String = "https://www.google.com/generate_204"): Int {
         return try {
             val req = Request.Builder()
                 .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=5000&url=${urlEncode(testUrl)}")
