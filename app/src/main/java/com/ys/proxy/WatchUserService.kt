@@ -26,10 +26,29 @@ class WatchUserService : Service() {
         override fun exec(cmd: String): String {
             return try {
                 val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
-                val out = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-                val err = BufferedReader(InputStreamReader(process.errorStream)).use { it.readText() }
-                process.waitFor()
-                out + err
+
+                // 修复:并行读 stdout/stderr,避免管道缓冲区死锁。
+                // 之前顺序读会导致 stderr 填满 64KB 管道缓冲区后子进程阻塞 → 死锁。
+                val errBuilder = StringBuilder()
+                val errThread = Thread {
+                    try {
+                        BufferedReader(InputStreamReader(process.errorStream)).use { errBuilder.append(it.readText()) }
+                    } catch (_: Exception) {}
+                }
+                errThread.start()
+
+                val outBuilder = StringBuilder()
+                try {
+                    BufferedReader(InputStreamReader(process.inputStream)).use { outBuilder.append(it.readText()) }
+                } catch (_: Exception) {}
+
+                // waitFor 加 30s 超时,避免命令挂起永久阻塞
+                if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    return outBuilder.toString() + errBuilder.toString() + "\n[TIMEOUT: 命令执行超时 30s]"
+                }
+                errThread.join(2000)
+                outBuilder.toString() + errBuilder.toString()
             } catch (e: Exception) {
                 "ERROR: ${e.message}"
             }
@@ -38,8 +57,9 @@ class WatchUserService : Service() {
         override fun startMihomo(binPath: String, homePath: String) {
             // 确保 home 目录存在
             exec("mkdir -p $homePath")
-            // 先停掉旧的,避免端口冲突
-            exec("pkill -f $binPath 2>/dev/null; sleep 1; true")
+            // 先停掉旧的,避免端口冲突。
+            // 修复:用 -x 精确匹配进程名,避免 -f 匹配 shell 命令行自身(自杀)
+            exec("pkill -x mihomo 2>/dev/null; sleep 1; true")
             // nohup 后台启动,脱离 UserService 进程生命周期
             exec("nohup $binPath -d $homePath > $homePath/mihomo.log 2>&1 &")
             // 给一点启动时间
@@ -47,7 +67,8 @@ class WatchUserService : Service() {
         }
 
         override fun stopMihomo() {
-            exec("pkill -f mihomo 2>/dev/null; true")
+            // 修复:用 -x 精确匹配,避免 -f 自匹配 shell
+            exec("pkill -x mihomo 2>/dev/null; true")
         }
 
         override fun setProxy(proxy: String) {
@@ -72,7 +93,8 @@ class WatchUserService : Service() {
         }
 
         override fun isMihomoRunning(): Boolean {
-            val r = exec("pgrep -f mihomo 2>/dev/null || echo NONE")
+            // 修复:用 -x 精确匹配,避免 -f 匹配 shell 命令行自身
+            val r = exec("pgrep -x mihomo 2>/dev/null || echo NONE")
             return !r.contains("NONE") && r.isNotBlank()
         }
     }

@@ -112,7 +112,7 @@ private fun MainScreen(vm: AppViewModel) {
             item { SubscriptionCard(vm, context) }
             if (vm.savedSubscriptions.isNotEmpty()) {
                 item { SectionLabel("已保存订阅") }
-                items(vm.savedSubscriptions) { sub ->
+                items(vm.savedSubscriptions, key = { it.name }) { sub ->
                     SavedSubscriptionCard(vm, sub)
                 }
             }
@@ -612,7 +612,11 @@ private fun NodesScreen(vm: AppViewModel) {
             // 直接扁平化显示所有节点(不再按分组):
             // 用户反馈"直接显示所有节点就行了",参考开源代理(如 Clash for Android /
             // FlClash)的节点列表视图 —— 一个节点一行,单行跑道形胶囊,选中态高亮。
-            items(nodes) { (node, delay) ->
+            //
+            // 关键修复(对标 FlClash/NekoBox):items 必须传 key,用节点名作 key。
+            // 之前无 key 默认按 index 复用,测速排序变化时同一 item 位置会突然显示
+            // 另一个节点的内容(视觉闪烁),用户无法点击想要的节点。
+            items(nodes, key = { (node, _) -> node }) { (node, delay) ->
                 NodeCapsule(
                     name = node,
                     delay = delay,
@@ -754,6 +758,9 @@ private fun NodeCapsule(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             // 节点名:过长时 marquee 滚动(不截断),选中态加 ● 前缀
+            // 修复(对标 FlClash/NekoBox):iterations 限制为 3 次,避免 Int.MAX_VALUE
+            // 永久滚动持续占用 CPU(节点多时每个可见 item 都在滚 = 5-8% CPU + 耗电)。
+            // 3 次足够让用户读完长名字,之后停下,用户需要再点一次才重新滚。
             Text(
                 if (selected) "● $name" else name,
                 color = if (selected) MaterialTheme.colorScheme.primary
@@ -762,7 +769,7 @@ private fun NodeCapsule(
                 maxLines = 1,
                 modifier = Modifier
                     .weight(1f)
-                    .basicMarquee(),
+                    .basicMarquee(iterations = 3),
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.width(8.dp))

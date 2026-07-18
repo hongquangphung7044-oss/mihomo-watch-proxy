@@ -669,14 +669,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 扁平化视图下切换节点:找到所有包含该节点的 Selector 分组都执行切换。
+     * 扁平化视图下切换节点:优先切主分组(GLOBAL/PROXY),其次切第一个包含该节点的分组。
      *
-     * 关键修复:之前用 firstOrNull 只切第一个分组,导致用户点击"第2个分组"里的
-     * 节点时,实际切的是第一个分组的当前节点(同名节点),IP 不变。
-     *
-     * 正确做法:一个节点可能被多个分组引用(如 PROXY 和 🚀 节点选择都含该节点),
-     * 遍历所有包含该节点的分组都调用 selectNode,确保无论用户的出口流量走哪个分组,
-     * 切换后都能生效。
+     * 关键修复(对标 FlClash/NekoBox):
+     *  - 之前遍历所有引用该节点的分组都切,会破坏分流配置(如 YouTube 分组
+     *    也切到该节点,本应分流却走了直连节点)。
+     *  - 开源代理只切用户当前操作的那个分组。扁平化视图下,优先切主分组
+     *    (GLOBAL 或 PROXY,通常是用户的出口分组),其次是第一个包含该节点的分组。
+     *  - 这样保证 IP 切换生效(出口分组变了),又不影响分流。
      */
     fun selectAnyNode(nodeName: String) {
         val targetGroups = groups.filter { it.all.contains(nodeName) }
@@ -684,19 +684,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             error = "节点 $nodeName 不在任何分组中"
             return
         }
+        // 优先选主分组(GLOBAL > PROXY > 🚀 节点选择 > 第一个)
+        val mainGroup = targetGroups.firstOrNull { it.name == "GLOBAL" }
+            ?: targetGroups.firstOrNull { it.name == "PROXY" }
+            ?: targetGroups.firstOrNull { it.name.contains("节点选择") || it.name.contains("PROXY") }
+            ?: targetGroups.first()
+
+        // 乐观更新:立即改 groups 的 now 字段,UI 即时响应,不等 API 返回
+        groups = groups.map { g ->
+            if (g.name == mainGroup.name) g.copy(now = nodeName) else g
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
-            // 遍历所有包含该节点的分组,逐个切换
-            var lastOk = false
-            for (g in targetGroups) {
-                val ok = api.selectNode(g.name, nodeName)
-                if (ok) lastOk = true
-            }
-            if (lastOk) {
-                // 刷新分组状态(更新 now 字段)
+            val ok = api.selectNode(mainGroup.name, nodeName)
+            if (ok) {
+                // 用服务器返回值"校正"状态
                 allProxiesSnapshot = api.getProxies()
                 groups = api.getSelectorGroups()
             } else {
-                error = "切换节点失败"
+                error = "切换节点失败(分组: ${mainGroup.name})"
+                // 失败回滚:重新拉取真实状态
+                allProxiesSnapshot = api.getProxies()
+                groups = api.getSelectorGroups()
             }
         }
     }
@@ -785,6 +794,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val finalSnapshot = synchronized(result) { result.toMap() }
                 mainHandler.post { delays = finalSnapshot }
                 appendLog("延迟测试完成 ${done.get()}/${total}")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Activity 销毁时 viewModelScope 取消,awaitAll 会抛 CancellationException,
+                // 应当重抛而非当成业务错误显示给用户
+                throw e
             } catch (e: Exception) {
                 error = "测延迟失败: ${e.message}"
             } finally {
@@ -827,8 +840,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * 追加日志。修复:必须切回主线程写 mutableStateOf,
+     * 之前在 IO 线程直接写违反 Compose 契约,长期会触发异常/闪退。
+     */
     private fun appendLog(s: String) {
         val entry = s.take(800)
-        log = (entry + "\n---\n" + log).take(2000)
+        mainHandler.post {
+            log = (entry + "\n---\n" + log).take(2000)
+        }
+    }
+
+    /**
+     * 修复(对标开源项目):ViewModel 销毁时必须注销 Shizuku binder listeners,
+     * 否则 Shizuku 单例永久持有 AppViewModel 引用 → 内存泄漏 + 已销毁 state 回调闪退。
+     */
+    override fun onCleared() {
+        super.onCleared()
+        shizuku.unregisterBinderListeners()
+        shizuku.unbind()
     }
 }

@@ -24,10 +24,18 @@ import java.util.concurrent.TimeUnit
  */
 class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private val secret: String = "watch123") {
 
-    private val client = OkHttpClient.Builder()
+    // 快接口 client(getProxies/selectNode/reloadConfig):本地 9090,响应 <100ms
+    private val fastClient = OkHttpClient.Builder()
         .proxy(java.net.Proxy.NO_PROXY)
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)  // 必须大于测速 timeout(15s),否则 OkHttp 先断连
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .build()
+
+    // 测速 client(testDelay):mihomo 内部 timeout=15s + 余量,readTimeout 必须大于 15s
+    private val testClient = OkHttpClient.Builder()
+        .proxy(java.net.Proxy.NO_PROXY)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
     /** 代理节点信息 */
@@ -48,7 +56,9 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
         while (keys.hasNext()) {
             val name = keys.next()
             val p = proxies.getJSONObject(name)
-            val all = if (p.has("all")) {
+            // 修复:has("all") 在值为 null 时仍返回 true,会抛 JSONException。
+            // 与 now 字段保持一致的 null 检查
+            val all = if (p.has("all") && !p.isNull("all")) {
                 p.getJSONArray("all").let { arr ->
                     (0 until arr.length()).map { arr.getString(it) }
                 }
@@ -66,16 +76,22 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
         }
     }
 
-    /** 切换 Selector 分组的当前节点 */
+    /**
+     * 切换 Selector 分组的当前节点。
+     *
+     * 修复:之前用字符串拼接 JSON body,如果 nodeName 含 " 或 \ 会破坏 JSON。
+     * 改用 JSONObject 构造,自动转义特殊字符。
+     */
     fun selectNode(groupName: String, nodeName: String): Boolean {
         return try {
-            val body = """{"name":"$nodeName"}""".toRequestBody("application/json".toMediaType())
+            val jsonBody = JSONObject().put("name", nodeName).toString()
+            val body = jsonBody.toRequestBody("application/json".toMediaType())
             val req = Request.Builder()
                 .url("$baseUrl/proxies/${urlEncode(groupName)}")
                 .header("Authorization", "Bearer $secret")
                 .put(body)
                 .build()
-            client.newCall(req).execute().use { it.isSuccessful }
+            fastClient.newCall(req).execute().use { it.isSuccessful }
         } catch (e: Exception) {
             false
         }
@@ -87,34 +103,33 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
      * 测试 URL 选择(参考开源代理 Clash for Android / FlClash / Mihomo 默认配置):
      *  - 默认用 `http://www.gstatic.com/generate_204`(HTTP,非 HTTPS)
      *    这是 Clash 系内核的默认测速 URL,几乎所有开源代理都用它。
-     *  - 必须用 HTTP 而非 HTTPS:HTTPS 在部分节点上 TLS 握手会失败(SNI 被识别 /
-     *    证书校验异常),导致测速全部失败;HTTP 的 204 端点只测连通性 + RTT,
-     *    不涉及 TLS,最稳。
+     *  - HTTP 的 204 端点只测连通性 + RTT,不涉及 TLS 握手,最稳。
      *
-     * 关键修复(测速全部失败的根因):
-     *  - mihomo 的 /proxies/{name}/delay 在测速失败时返回非 200 状态码(400/500/504),
-     *    body 里是 {"message":"..."} 而非 {"delay":N}。之前代码 if(!isSuccessful) return -1
-     *    把所有非 200 都当失败,但实际节点可能可用 —— 只是返回码不匹配 expected。
-     *  - expected 参数默认期望 204,但部分 generate_204 端点会返回 200(如经 CDN 重定向),
-     *    导致 mihomo 判定失败。改为 expected=200 兼容更多场景。
-     *  - 不依赖 HTTP 状态码,直接解析 body JSON:有 delay 字段就用,没有才是真失败。
+     * 关键修复(对标开源项目,彻底解决测速失败):
+     *  - expected 参数用 204(默认值),匹配 generate_204 端点实际返回的状态码。
+     *    之前用 expected=200 是错的 —— generate_204 端点按定义返回 204 No Content,
+     *    expected=200 会让 mihomo 判定所有节点测速失败。
+     *  - 不依赖 HTTP 状态码:mihomo 测速失败时返回 400/500/504,body 是
+     *    {"message":"..."} 而非 {"delay":N}。直接读 body JSON,有 delay 字段就用。
+     *  - 用独立的 testClient(readTimeout=20s),避免被 fastClient 的 5s 超时截断
+     *    (mihomo 内部 timeout=15s,OkHttp 必须 >15s)。
      *
      * timeout:15000ms(15 秒),给慢节点 + 网络抖动足够时间。
      */
     fun testDelay(nodeName: String, testUrl: String = "http://www.gstatic.com/generate_204"): Int {
         return try {
-            // expected=200:接受 200 响应(部分 generate_204 端点经 CDN 重定向后返回 200)
+            // expected=204:generate_204 端点按定义返回 204 No Content
             val req = Request.Builder()
-                .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=15000&expected=200&url=${urlEncode(testUrl)}")
+                .url("$baseUrl/proxies/${urlEncode(nodeName)}/delay?timeout=15000&expected=204&url=${urlEncode(testUrl)}")
                 .header("Authorization", "Bearer $secret")
                 .get()
                 .build()
-            client.newCall(req).execute().use { resp ->
+            testClient.newCall(req).execute().use { resp ->
                 // 不依赖状态码:mihomo 测速失败时返回 400/500/504 但 body 仍可能有信息,
                 // 直接读 body JSON,有 delay 字段就用
                 val body = resp.body?.string() ?: "{}"
                 val obj = JSONObject(body)
-                if (obj.has("delay")) obj.getInt("delay") else -1
+                if (obj.has("delay") && !obj.isNull("delay")) obj.getInt("delay") else -1
             }
         } catch (e: Exception) {
             -1
@@ -124,17 +139,23 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
     /**
      * 重载配置文件(更新订阅后调用,无需重启 mihomo 进程)。
      * mihomo API: PUT /configs?force=true,body={"path":"<config.yaml 绝对路径>"}
+     *
+     * 修复:用 JSONObject 构造 body,避免 configPath 含特殊字符破坏 JSON。
      * @param configPath 配置文件路径,如 /data/local/tmp/mihomo_home/config.yaml
      */
     fun reloadConfig(configPath: String): Boolean {
         return try {
-            val body = """{"path":"$configPath","payload":""}""".toRequestBody("application/json".toMediaType())
+            val jsonBody = JSONObject()
+                .put("path", configPath)
+                .put("payload", "")
+                .toString()
+            val body = jsonBody.toRequestBody("application/json".toMediaType())
             val req = Request.Builder()
                 .url("$baseUrl/configs?force=true")
                 .header("Authorization", "Bearer $secret")
                 .put(body)
                 .build()
-            client.newCall(req).execute().use { it.isSuccessful }
+            fastClient.newCall(req).execute().use { it.isSuccessful }
         } catch (e: Exception) {
             false
         }
@@ -146,7 +167,7 @@ class MihomoApi(private val baseUrl: String = MihomoController.API_BASE, private
             .header("Authorization", "Bearer $secret")
             .get()
             .build()
-        client.newCall(req).execute().use { resp ->
+        fastClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw RuntimeException("API $path 失败: HTTP ${resp.code}")
             return resp.body?.string() ?: throw RuntimeException("空响应")
         }

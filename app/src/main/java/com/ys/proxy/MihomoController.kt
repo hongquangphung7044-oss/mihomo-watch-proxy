@@ -256,15 +256,30 @@ class MihomoController(private val context: Context) {
     }
 
     /**
-     * 更新订阅:重新写 config.yaml,然后调 mihomo API reload。
-     * 不重启 mihomo 进程,不断流。
+     * 更新配置并热重载。
+     *
+     * 修复(对标 FlClash/Clash for Android):
+     *  - 先备份旧 config.yaml 到 .bak,再写新配置。
+     *  - 热重载失败后回滚到备份配置,确保磁盘配置文件始终有效。
+     *  - 避免坏配置留盘导致下次 mihomo 启动失败 → 整机无代理。
      */
     fun updateConfigAndReload(runner: CommandRunner, configContent: String): Boolean {
+        // 1. 备份旧配置
+        runner("cp '$CONFIG_PATH' '$CONFIG_PATH.bak' 2>/dev/null; echo OK")
+        // 2. 写新配置
         installConfig(runner, configContent)
-        return try {
+        // 3. 热重载
+        val ok = try {
             MihomoApi().reloadConfig(CONFIG_PATH)
         } catch (e: Exception) {
             false
         }
+        // 4. 失败则回滚磁盘配置,避免坏配置留盘
+        if (!ok) {
+            runner("cp '$CONFIG_PATH.bak' '$CONFIG_PATH' 2>/dev/null; true")
+            // 尝试用旧配置重新加载,让内存状态和磁盘一致
+            try { MihomoApi().reloadConfig(CONFIG_PATH) } catch (_: Exception) {}
+        }
+        return ok
     }
 }

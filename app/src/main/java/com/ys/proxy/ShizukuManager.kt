@@ -72,17 +72,36 @@ class ShizukuManager(private val context: Context) {
         args
     }
 
+    // 修复:保存 listener 引用以便后续注销,避免内存泄漏。
+    // 之前用匿名 lambda 注册后从不注销,导致 AppViewModel 销毁后 Shizuku 仍持有
+    // ShizukuManager -> AppViewModel -> Application 的引用链,内存泄漏。
+    private var binderReceivedListener: Shizuku.OnBinderReceivedListener? = null
+    private var binderDeadListener: Shizuku.OnBinderDeadListener? = null
+
     fun registerBinderListeners() {
+        if (binderReceivedListener != null) return  // 已注册,避免重复
         try {
-            Shizuku.addBinderReceivedListener { onStateChanged?.invoke() }
-            Shizuku.addBinderDeadListener {
+            binderReceivedListener = Shizuku.OnBinderReceivedListener { onStateChanged?.invoke() }
+            binderDeadListener = Shizuku.OnBinderDeadListener {
                 service = null
                 conn = null
                 bindInProgress = false
                 onStateChanged?.invoke()
             }
+            Shizuku.addBinderReceivedListener(binderReceivedListener)
+            Shizuku.addBinderDeadListener(binderDeadListener)
         } catch (e: Exception) {
         }
+    }
+
+    /**
+     * 注销 binder listeners,必须在 AppViewModel.onCleared() 调用,避免内存泄漏。
+     */
+    fun unregisterBinderListeners() {
+        binderReceivedListener?.let { Shizuku.removeBinderReceivedListener(it) }
+        binderDeadListener?.let { Shizuku.removeBinderDeadListener(it) }
+        binderReceivedListener = null
+        binderDeadListener = null
     }
 
     val isInstalled: Boolean
@@ -309,10 +328,30 @@ class ShizukuManager(private val context: Context) {
         )
         method.isAccessible = true
         val process = method.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
-        val out = process.inputStream.bufferedReader().use { it.readText() }
-        val err = process.errorStream.bufferedReader().use { it.readText() }
-        process.waitFor()
-        return out + err
+
+        // 修复:并行读 stdout/stderr,避免管道缓冲区死锁。
+        // 之前顺序读(stdout 先 readText 阻塞到 EOF)再读 stderr,如果 stderr
+        // 填满 64KB OS 管道缓冲区,子进程会阻塞在 stderr 写入,stdout 永不到 EOF → 死锁。
+        val errBuilder = StringBuilder()
+        val errThread = Thread {
+            try {
+                process.errorStream.bufferedReader().use { errBuilder.append(it.readText()) }
+            } catch (_: Exception) {}
+        }
+        errThread.start()
+
+        val outBuilder = StringBuilder()
+        try {
+            process.inputStream.bufferedReader().use { outBuilder.append(it.readText()) }
+        } catch (_: Exception) {}
+
+        // waitFor 加 30s 超时,避免命令挂起永久阻塞
+        if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            return outBuilder.toString() + errBuilder.toString() + "\n[TIMEOUT: 命令执行超时 30s]"
+        }
+        errThread.join(2000)
+        return outBuilder.toString() + errBuilder.toString()
     }
 
     /** 确保 Shizuku.service 字段已设置(binder received 时设置,可能需要手动触发) */
