@@ -669,15 +669,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 扁平化视图下切换节点:自动找到第一个包含该节点的 Selector 分组,
-     * 然后调用 [selectNode] 切换。用户不需要关心节点属于哪个分组。
+     * 扁平化视图下切换节点:找到所有包含该节点的 Selector 分组都执行切换。
+     *
+     * 关键修复:之前用 firstOrNull 只切第一个分组,导致用户点击"第2个分组"里的
+     * 节点时,实际切的是第一个分组的当前节点(同名节点),IP 不变。
+     *
+     * 正确做法:一个节点可能被多个分组引用(如 PROXY 和 🚀 节点选择都含该节点),
+     * 遍历所有包含该节点的分组都调用 selectNode,确保无论用户的出口流量走哪个分组,
+     * 切换后都能生效。
      */
     fun selectAnyNode(nodeName: String) {
-        val group = groups.firstOrNull { it.all.contains(nodeName) }
-        if (group != null) {
-            selectNode(group.name, nodeName)
-        } else {
+        val targetGroups = groups.filter { it.all.contains(nodeName) }
+        if (targetGroups.isEmpty()) {
             error = "节点 $nodeName 不在任何分组中"
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            // 遍历所有包含该节点的分组,逐个切换
+            var lastOk = false
+            for (g in targetGroups) {
+                val ok = api.selectNode(g.name, nodeName)
+                if (ok) lastOk = true
+            }
+            if (lastOk) {
+                // 刷新分组状态(更新 now 字段)
+                allProxiesSnapshot = api.getProxies()
+                groups = api.getSelectorGroups()
+            } else {
+                error = "切换节点失败"
+            }
         }
     }
 
