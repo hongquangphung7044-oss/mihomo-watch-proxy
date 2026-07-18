@@ -88,8 +88,8 @@ class ShizukuManager(private val context: Context) {
                 bindInProgress = false
                 onStateChanged?.invoke()
             }
-            Shizuku.addBinderReceivedListener(binderReceivedListener)
-            Shizuku.addBinderDeadListener(binderDeadListener)
+            Shizuku.addBinderReceivedListener(binderReceivedListener!!)
+            Shizuku.addBinderDeadListener(binderDeadListener!!)
         } catch (e: Exception) {
         }
     }
@@ -98,8 +98,12 @@ class ShizukuManager(private val context: Context) {
      * 注销 binder listeners,必须在 AppViewModel.onCleared() 调用,避免内存泄漏。
      */
     fun unregisterBinderListeners() {
-        binderReceivedListener?.let { Shizuku.removeBinderReceivedListener(it) }
-        binderDeadListener?.let { Shizuku.removeBinderDeadListener(it) }
+        try {
+            binderReceivedListener?.let { Shizuku.removeBinderReceivedListener(it) }
+            binderDeadListener?.let { Shizuku.removeBinderDeadListener(it) }
+        } catch (_: Exception) {
+            // Shizuku 未初始化等异常忽略
+        }
         binderReceivedListener = null
         binderDeadListener = null
     }
