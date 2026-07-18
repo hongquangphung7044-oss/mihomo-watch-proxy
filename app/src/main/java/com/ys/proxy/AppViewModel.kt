@@ -188,34 +188,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 节点是否为当前选中节点。
-     *
-     * 关键修复:旧逻辑是 groups.any { it.now == nodeName },即只要任一分组
-     * 选中该节点就标黄。但订阅里通常有多个分组(PROXY、♻️ 自动选择、🚀 节点选择...)
-     * 都同时选中同一节点 → UI 显示多个黄点,用户困惑。
-     *
-     * 新逻辑:只看"主分组"的 now。主分组优先级:
-     *   GLOBAL > PROXY > *PROXY* > 🚀 节点选择 > 第一个 Selector 分组
-     * 这样 UI 只有一个节点显示黄点(除非主分组未选中任何 allNodes 里的节点)。
+     * 节点是否为当前选中节点(任一 Selector 分组选中它就算)。
+     * 用于 UI 黄点提示 —— 多个分组各自选了不同节点时,会有多个黄点(正常)。
      */
     fun isNodeActive(nodeName: String): Boolean {
-        val main = mainSelectorGroup ?: return false
-        return main.now == nodeName
+        return groups.any { it.now == nodeName }
     }
-
-    /**
-     * 主 Selector 分组(决定出口 IP 的那个)。
-     * 优先级:GLOBAL > PROXY > *PROXY* > 🚀 节点选择 > 第一个 Selector 分组
-     */
-    private val mainSelectorGroup: MihomoApi.Proxy?
-        get() {
-            if (groups.isEmpty()) return null
-            return groups.firstOrNull { it.name == "GLOBAL" }
-                ?: groups.firstOrNull { it.name == "PROXY" }
-                ?: groups.firstOrNull { it.name.contains("PROXY", ignoreCase = true) }
-                ?: groups.firstOrNull { it.name.contains("节点选择") }
-                ?: groups.firstOrNull()
-        }
 
     fun refreshShizuku() {
         shizukuState = when {
@@ -703,43 +681,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 扁平化视图下切换节点:优先切主分组(GLOBAL/PROXY),其次切第一个包含该节点的分组。
+     * 扁平化视图下切换节点:把所有包含该节点的 Selector 分组都切到该节点。
      *
-     * 关键修复(对标 FlClash/NekoBox):
-     *  - 之前遍历所有引用该节点的分组都切,会破坏分流配置(如 YouTube 分组
-     *    也切到该节点,本应分流却走了直连节点)。
-     *  - 开源代理只切用户当前操作的那个分组。扁平化视图下,优先切主分组
-     *    (GLOBAL 或 PROXY,通常是用户的出口分组),其次是第一个包含该节点的分组。
-     *  - 这样保证 IP 切换生效(出口分组变了),又不影响分流。
+     * 关键修复(对标 FlClash/NekoBox + 解决"点节点 IP 不变"问题):
+     *
+     * 旧逻辑只切一个"主分组"(GLOBAL/PROXY 优先),但这在很多订阅结构下切不动 IP:
+     *  - 订阅里有多个 Selector 分组(PROXY、🚀 节点选择、🎮 游戏平台、📺 流媒体...)
+     *    各自选了不同节点 → UI 上多个节点都有黄点(用户报告的现象)
+     *  - mihomo 的 rule 最终匹配到哪个分组,流量就走那个分组的 now
+     *  - 你只切 PROXY,但实际规则走的是 🚀 节点选择 → IP 不变
+     *
+     * 新逻辑(对标 FlClash 的"全局选择"行为):
+     *  - 找到所有 all 包含该节点的 Selector 分组
+     *  - 逐个调 API 切换(并发,API 幂等所以并发安全)
+     *  - 任一切失败不阻断其他切换,但记录错误
+     *  - 全部切完后重新拉取状态校正 UI
+     *
+     * 这样不管 mihomo 的规则匹配到哪个分组,出口都是你选的节点。
+     * 对于 URLTest/Fallback 分组(它们不在 groups 里)无法切换,但 Selector 切完
+     * 后 URLTest 的 now 通常也会被 mihomo 重新测速选择(如果订阅规则没走 URLTest)。
      */
     fun selectAnyNode(nodeName: String) {
         val targetGroups = groups.filter { it.all.contains(nodeName) }
         if (targetGroups.isEmpty()) {
-            error = "节点 $nodeName 不在任何分组中"
+            error = "节点 $nodeName 不在任何 Selector 分组中"
             return
         }
-        // 优先选主分组(GLOBAL > PROXY > 🚀 节点选择 > 第一个)
-        val mainGroup = targetGroups.firstOrNull { it.name == "GLOBAL" }
-            ?: targetGroups.firstOrNull { it.name == "PROXY" }
-            ?: targetGroups.firstOrNull { it.name.contains("节点选择") || it.name.contains("PROXY") }
-            ?: targetGroups.first()
 
-        // 乐观更新:立即改 groups 的 now 字段,UI 即时响应,不等 API 返回
+        // 乐观更新:立即把所有相关 Selector 分组的 now 都改成 nodeName,UI 即时响应
         groups = groups.map { g ->
-            if (g.name == mainGroup.name) g.copy(now = nodeName) else g
+            if (g.all.contains(nodeName)) g.copy(now = nodeName) else g
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = api.selectNode(mainGroup.name, nodeName)
-            if (ok) {
-                // 用服务器返回值"校正"状态
+            var failedGroups = mutableListOf<String>()
+            // 并发切换所有相关 Selector 分组(API 幂等,并发安全)
+            val results = targetGroups.map { g ->
+                async {
+                    g.name to api.selectNode(g.name, nodeName)
+                }
+            }.awaitAll()
+            for ((gName, ok) in results) {
+                if (!ok) failedGroups.add(gName)
+            }
+            // 重新拉取真实状态,校正乐观更新(无论成败都拉,确保 UI 准确)
+            try {
                 allProxiesSnapshot = api.getProxies()
                 groups = api.getSelectorGroups()
-            } else {
-                error = "切换节点失败(分组: ${mainGroup.name})"
-                // 失败回滚:重新拉取真实状态
-                allProxiesSnapshot = api.getProxies()
-                groups = api.getSelectorGroups()
+            } catch (_: Exception) {}
+            if (failedGroups.isNotEmpty()) {
+                error = "部分分组切换失败: ${failedGroups.joinToString(", ")}"
             }
         }
     }
