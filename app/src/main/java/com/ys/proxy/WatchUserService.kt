@@ -29,6 +29,9 @@ class WatchUserService : Service() {
 
                 // 修复:并行读 stdout/stderr,避免管道缓冲区死锁。
                 // 之前顺序读会导致 stderr 填满 64KB 管道缓冲区后子进程阻塞 → 死锁。
+                // 注意:不加超时强杀 —— cp 大文件(geoip.metadb 5MB+)在弱 CPU 手表上
+                // 可能超过 30s,被 destroyForcibly 强杀后 cp 没完成,后续验证失败
+                // → "二进制安装失败/geoip 安装失败"。命令同步执行会自然结束。
                 val errBuilder = StringBuilder()
                 val errThread = Thread {
                     try {
@@ -42,11 +45,7 @@ class WatchUserService : Service() {
                     BufferedReader(InputStreamReader(process.inputStream)).use { outBuilder.append(it.readText()) }
                 } catch (_: Exception) {}
 
-                // waitFor 加 30s 超时,避免命令挂起永久阻塞
-                if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
-                    return outBuilder.toString() + errBuilder.toString() + "\n[TIMEOUT: 命令执行超时 30s]"
-                }
+                process.waitFor()
                 errThread.join(2000)
                 outBuilder.toString() + errBuilder.toString()
             } catch (e: Exception) {
