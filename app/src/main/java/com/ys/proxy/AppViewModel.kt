@@ -192,36 +192,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 用于解决"多个黄点"问题:订阅里多个 Selector 分组各自有默认选中节点
      * (PROXY 选了 A,🚀 节点选择 选了 B,🎮 游戏平台 选了 C...),
-     * 旧 isNodeActive 判断"任一分组选中就标黄" → UI 上 A/B/C 都显示黄点,
-     * 用户看不出哪个是自己刚选的。
+     * 用户点节点后,需要区分"自己选的" vs "分组默认的"。
      *
-     * 新逻辑:
-     *  - 用户点节点 → 立即记到 userSelectedNode,UI 只在该节点显示黄点
-     *  - 切换失败或重新 loadGroups 时清空(回到"显示分组默认选择"模式)
-     *  - userSelectedNode 为 null 时(初次进入),只标 GLOBAL/PROXY 主分组的 now
+     * 用户选过的节点 → userSelectedNode 记下,UI 用琥珀金高亮(强)
+     * 其他分组默认选中的节点 → UI 用次要色标黄点(弱)
+     * 未选中节点 → 无标记
      */
     private var userSelectedNode: String? = null
 
     /**
-     * 节点是否为当前选中节点。
+     * 节点选中状态(三态)。
      *
-     * 优先级:
-     *  1. 用户刚选过的节点(userSelectedNode)→ 只有这一个显示黄点
-     *  2. 用户未选过时(初次进入),看主分组(GLOBAL > PROXY > 第一个 Selector)的 now
+     *  - USER_SELECTED:用户刚选的(强高亮,琥珀金背景)
+     *  - GROUP_DEFAULT:分组默认选中(弱标记,灰色小圆点)
+     *  - NONE:未选中
      *
-     * 这样避免多个分组各自默认选择导致多个黄点,用户无法区分自己刚选的。
+     * 这样用户能一眼看出哪个是自己选的,哪些是订阅分组的默认选择。
      */
-    fun isNodeActive(nodeName: String): Boolean {
-        val selected = userSelectedNode
-        if (selected != null) {
-            return nodeName == selected
+    enum class NodeSelectedState { USER_SELECTED, GROUP_DEFAULT, NONE }
+
+    fun nodeSelectedState(nodeName: String): NodeSelectedState {
+        val userSel = userSelectedNode
+        if (userSel != null) {
+            return if (nodeName == userSel) NodeSelectedState.USER_SELECTED else NodeSelectedState.NONE
         }
-        // 初次进入未选过:只标主分组(GLOBAL > PROXY > 第一个 Selector)的 now
-        val mainGroup = groups.firstOrNull { it.name == "GLOBAL" }
-            ?: groups.firstOrNull { it.name == "PROXY" }
-            ?: groups.firstOrNull()
-        ?: return false
-        return mainGroup.now == nodeName
+        // 用户未选过:显示所有分组默认选中的节点(让用户看到分组当前状态)
+        return if (groups.any { it.now == nodeName }) NodeSelectedState.GROUP_DEFAULT else NodeSelectedState.NONE
+    }
+
+    /** 兼容旧调用(等价于 state != NONE) */
+    fun isNodeActive(nodeName: String): Boolean {
+        return nodeSelectedState(nodeName) != NodeSelectedState.NONE
     }
 
     fun refreshShizuku() {
@@ -657,6 +658,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Thread.sleep(500)
                 isRunning = false
                 groups = emptyList()
+                userSelectedNode = null  // 停止代理清空用户选择
                 appendLog("已停止,代理已清除")
             } catch (e: Exception) {
                 error = "停止失败: ${e.message}"
@@ -672,6 +674,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadGroups() {
         if (!isRunning) { error = "mihomo 未运行"; return }
+        // 切换订阅/重新加载时清空用户选择,回到"显示分组默认选择"模式
+        userSelectedNode = null
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // 先取完整快照(含落地节点 + 所有分组),用于 filteredGroups 精准过滤
@@ -736,6 +740,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             error = "节点 $nodeName 不在任何 Selector 分组中"
             return
         }
+
+        // 记下用户选的节点,UI 用琥珀金高亮(与分组默认选中的灰色区分)
+        userSelectedNode = nodeName
 
         // 乐观更新:立即把所有相关 Selector 分组的 now 都改成 nodeName,UI 即时响应
         groups = groups.map { g ->

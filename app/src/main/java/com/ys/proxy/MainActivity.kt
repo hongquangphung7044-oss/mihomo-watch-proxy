@@ -620,7 +620,7 @@ private fun NodesScreen(vm: AppViewModel) {
                 NodeCapsule(
                     name = node,
                     delay = delay,
-                    selected = vm.isNodeActive(node),
+                    selectedState = vm.nodeSelectedState(node),
                     onClick = { vm.selectAnyNode(node) }
                 )
             }
@@ -728,7 +728,7 @@ private fun EmptyNodesCard() {
 private fun NodeCapsule(
     name: String,
     delay: Int?,
-    selected: Boolean,
+    selectedState: AppViewModel.NodeSelectedState,
     onClick: () -> Unit
 ) {
     val (delayLabel, delayColor) = when (delay) {
@@ -740,15 +740,43 @@ private fun NodeCapsule(
         in 301..800 -> "${delay}ms" to StatusWarning
         else -> "${delay}ms" to StatusBad
     }
+
+    // 三态视觉区分:
+    //  - USER_SELECTED(用户选的):琥珀金背景 + ● 前缀(强高亮,一眼看出是自己选的)
+    //  - GROUP_DEFAULT(分组默认选中):灰色背景 + ○ 前缀(弱标记,表示分组当前默认)
+    //  - NONE(未选中):默认 surface 背景,无前缀
+    val containerColor: Color
+    val contentColor: Color
+    val prefix: String
+    val nameColor: Color
+    when (selectedState) {
+        AppViewModel.NodeSelectedState.USER_SELECTED -> {
+            containerColor = MaterialTheme.colorScheme.primary           // 琥珀金背景
+            contentColor = MaterialTheme.colorScheme.onPrimary
+            prefix = "● "                                              // 实心圆点(自己选的)
+            nameColor = MaterialTheme.colorScheme.onPrimary
+        }
+        AppViewModel.NodeSelectedState.GROUP_DEFAULT -> {
+            containerColor = MaterialTheme.colorScheme.secondaryContainer // 次要色背景(灰)
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            prefix = "○ "                                              // 空心圆点(分组默认)
+            nameColor = MaterialTheme.colorScheme.onSecondaryContainer
+        }
+        AppViewModel.NodeSelectedState.NONE -> {
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            contentColor = MaterialTheme.colorScheme.onSurface
+            prefix = ""                                                // 无前缀
+            nameColor = MaterialTheme.colorScheme.onSurface
+        }
+    }
+
     Button(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().height(48.dp),
         shape = RoundedCornerShape(50),  // 跑道形(两端半圆)
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
-                             else MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
-                           else MaterialTheme.colorScheme.onSurface
+            containerColor = containerColor,
+            contentColor = contentColor
         )
     ) {
         // 节点名 + 延迟 横向布局
@@ -757,14 +785,13 @@ private fun NodeCapsule(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // 节点名:过长时 marquee 滚动(不截断),选中态加 ● 前缀
+            // 节点名:过长时 marquee 滚动(不截断),选中态加前缀区分
             // 修复(对标 FlClash/NekoBox):iterations 限制为 3 次,避免 Int.MAX_VALUE
             // 永久滚动持续占用 CPU(节点多时每个可见 item 都在滚 = 5-8% CPU + 耗电)。
             // 3 次足够让用户读完长名字,之后停下,用户需要再点一次才重新滚。
             Text(
-                if (selected) "● $name" else name,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface,
+                "$prefix$name",
+                color = nameColor,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 modifier = Modifier
