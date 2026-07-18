@@ -815,15 +815,17 @@ private fun NodeCapsule(
 @Composable
 private fun SaveDialog(vm: AppViewModel) {
     // 用 Wear M3 的 Dialog(替代标准 androidx.compose.ui.window.Dialog)
-    // Wear M3 Dialog 专为圆形屏设计,正确处理边缘裁剪,不会出现黑半圆遮罩。
+    // 关键修复:modifier 用 fillMaxSize 而非 fillMaxWidth ——
+    // fillMaxWidth 会让 Dialog 内部 Box 高度 wrap_content,Scrim 不覆盖整个圆形屏,
+    // 圆形屏上下角会露出黑色半圆遮罩。fillMaxSize 让 Scrim 正确覆盖圆形屏。
     Dialog(
         showDialog = true,
         onDismissRequest = vm::cancelSaveDialog,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxSize()
     ) {
+        // Dialog 内部 content 直接放 Card,Card 提供 surfaceContainer 背景 + 圆角
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
-            // 关键修复:verticalScroll 确保圆形小屏上"取消"按钮可见,
-            // 内容超出屏高时可上下滚动。
+            // verticalScroll 确保圆形小屏上"取消"按钮可见
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -842,14 +844,16 @@ private fun SaveDialog(vm: AppViewModel) {
                 Spacer(Modifier.height(12.dp))
                 UrlInput(vm.editingSubName, vm::updateEditingName, "例如:主线路", true)
                 Spacer(Modifier.height(12.dp))
-                FilledTonalButton(
+                // 主操作按钮用 Button(primary 琥珀金背景) —— 比 FilledTonalButton 更显眼,
+                // 在深色 Card 背景上有明显圆框,不会"只有文字"
+                Button(
                     onClick = vm::confirmSaveSubscription,
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = vm::cancelSaveDialog,
-                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
             }
         }
@@ -863,10 +867,11 @@ private fun SaveDialog(vm: AppViewModel) {
 @Composable
 private fun SubActionDialog(vm: AppViewModel) {
     val sub = vm.actionSub ?: return
+    // modifier 用 fillMaxSize 让 Scrim 正确覆盖圆形屏,避免上下半圆遮罩
     Dialog(
         showDialog = true,
         onDismissRequest = vm::cancelSubAction,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxSize()
     ) {
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
             Column(
@@ -881,24 +886,25 @@ private fun SubActionDialog(vm: AppViewModel) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(12.dp))
-                FilledTonalButton(
+                // 主操作按钮用 Button(primary 琥珀金背景),有明显圆框
+                Button(
                     onClick = { vm.updateSavedSubscription(sub) },
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
                     Text(
                         if (vm.isRunning) "更新订阅(热重载)" else "更新订阅(直连下载)",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                Spacer(Modifier.height(6.dp))
-                FilledTonalButton(
+                Spacer(Modifier.height(8.dp))
+                Button(
                     onClick = { vm.startRename(sub) },
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("重命名", style = MaterialTheme.typography.bodySmall) }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = vm::cancelSubAction,
-                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
             }
         }
@@ -911,10 +917,11 @@ private fun SubActionDialog(vm: AppViewModel) {
 
 @Composable
 private fun RenameDialog(vm: AppViewModel) {
+    // modifier 用 fillMaxSize 让 Scrim 正确覆盖圆形屏,避免上下半圆遮罩
     Dialog(
         showDialog = true,
         onDismissRequest = vm::cancelRename,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxSize()
     ) {
         Card(onClick = {}, modifier = Modifier.fillMaxWidth()) {
             Column(
@@ -932,14 +939,15 @@ private fun RenameDialog(vm: AppViewModel) {
                 Spacer(Modifier.height(12.dp))
                 UrlInput(vm.renameText, vm::updateRenameText, "输入新名称", true)
                 Spacer(Modifier.height(12.dp))
-                FilledTonalButton(
+                // 主操作按钮用 Button(primary 琥珀金背景),有明显圆框
+                Button(
                     onClick = vm::confirmRename,
-                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) { Text("保存", style = MaterialTheme.typography.bodySmall) }
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = vm::cancelRename,
-                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) { Text("取消", style = MaterialTheme.typography.labelSmall) }
             }
         }
