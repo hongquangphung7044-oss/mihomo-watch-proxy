@@ -153,11 +153,18 @@ fun MihomoTheme(content: @Composable () -> Unit) {
 
     // Android 12+ 用系统动态颜色;低版本 fallback 到中性深色方案。
     // 注意:dynamicColorScheme 不是 @Composable,需 remember 包裹。
-    // 用 !! 断言非空:dynamicColorScheme 在字节码层返回 ColorScheme(非空),
-    // 但 remember 重载推断时可能保守成 ColorScheme?,显式 !! 确保传给 MaterialTheme 的是非空。
+    //
+    // 用 try-catch 包裹 dynamicColorScheme:某些 Wear OS 设备(如三星 Galaxy Watch)
+    // 或定制 ROM 上,系统动态颜色查询可能抛 RuntimeException / NullPointerException
+    // (依赖 Settings.Global / WallpaperManager 但取不到值),导致 App 启动即闪退。
+    // 任何异常都 fallback 到静态 FallbackColorScheme,保证应用能正常启动。
     val colorScheme = remember(context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            dynamicColorScheme(context)
+            try {
+                dynamicColorScheme(context)
+            } catch (_: Throwable) {
+                FallbackColorScheme
+            }
         } else {
             FallbackColorScheme
         }
